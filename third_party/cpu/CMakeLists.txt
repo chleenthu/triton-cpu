@@ -40,10 +40,15 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
 add_subdirectory(include)
 add_subdirectory(lib)
 if(TRITON_BUILD_PYTHON_MODULE)
-  if(NOT "${LLVM_NATIVE_ARCH}" IN_LIST LLVM_TARGETS_TO_BUILD)
-    message(FATAL_ERROR "TritonCPU requires the LLVM native target (${LLVM_NATIVE_ARCH})")
+  if(NOT "RISCV" IN_LIST LLVM_TARGETS_TO_BUILD)
+    message(FATAL_ERROR "TritonCPU requires the LLVM RISCV target")
   endif()
-  llvm_map_components_to_libnames(TRITON_CPU_NATIVE_LLVM_LIBS nativecodegen)
+  set(TRITON_CPU_NATIVE_LLVM_LIBS LLVMRISCVCodeGen LLVMRISCVDesc LLVMRISCVInfo)
+  # TRITON_CPU_TARGET=native additionally needs the build host's target.
+  if("${LLVM_NATIVE_ARCH}" IN_LIST LLVM_TARGETS_TO_BUILD)
+    llvm_map_components_to_libnames(TRITON_CPU_HOST_LLVM_LIBS nativecodegen)
+    list(APPEND TRITON_CPU_NATIVE_LLVM_LIBS ${TRITON_CPU_HOST_LLVM_LIBS})
+  endif()
 
   add_triton_plugin(TritonCPU
     ${CMAKE_CURRENT_SOURCE_DIR}/triton_cpu.cc

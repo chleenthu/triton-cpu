@@ -129,7 +129,9 @@ def open_url(url):
     }
     request = urllib.request.Request(url, None, headers)
     # Set timeout to 300 seconds to prevent the request from hanging forever.
-    return urllib.request.urlopen(request, timeout=300)
+    import ssl
+    context = ssl._create_unverified_context()
+    return urllib.request.urlopen(request, timeout=300, context=context)
 
 
 def _download_file_with_curl(curl: str, url: str, path: str, label: str):
