@@ -25,6 +25,8 @@
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
 
+#include <sstream>
+#include <vector>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/set.h>
 #include <nanobind/stl/string.h>
@@ -40,26 +42,101 @@ namespace py = nanobind;
 
 namespace {
 
+// The CPU backend cross-compiles for riscv64 by default, whatever the build
+// host is. TRITON_CPU_TARGET=native selects the build host instead; it is only
+// used to run a model on the host (e.g. scripts/build_qwen_engine.py capture).
+bool isNativeTarget() {
+  return mlir::triton::tools::getStrEnv("TRITON_CPU_TARGET") == "native";
+}
+
+const char *const kRISCV64Triple = "riscv64-unknown-linux-gnu";
+
 std::string getHostTargetTriple() {
-  std::string triple = llvm::sys::getDefaultTargetTriple();
-  if (triple.empty())
-    triple = llvm::sys::getProcessTriple();
-  return triple;
+  if (isNativeTarget()) {
+    std::string triple = llvm::sys::getDefaultTargetTriple();
+    if (triple.empty())
+      triple = llvm::sys::getProcessTriple();
+    return triple;
+  }
+  return kRISCV64Triple;
+}
+
+// The CPU backend always targets riscv64: a fixed RV64GCV baseline with
+// fixed-length vectors, since LLVM cannot reliably detect the vector extension
+// at runtime.
+const char *const kRISCV64CPU = "generic-rv64";
+// +zvfbfmin only makes bf16 a legal vector memory type (plain vle16/vse16);
+// without it LLVM scalarizes every bf16 vector load/store. The compiler
+// decomposes bf16 conversions to integer ops, so no bf16 instructions are emitted.
+const char *const kRISCV64Features = "+m,+f,+d,+v,+zvfbfmin";
+
+std::string getHostCPUName() {
+  return isNativeTarget() ? llvm::sys::getHostCPUName().str() : kRISCV64CPU;
+}
+
+std::string getHostFeatureString() {
+  return isNativeTarget() ? "" : kRISCV64Features;
+}
+
+// LMUL is taken from TRITON_RISCV_LMUL (1, 2, 4 or 8; default 8).
+std::string getRISCVLMUL() {
+  std::string lmul = mlir::triton::tools::getStrEnv("TRITON_RISCV_LMUL");
+  if (lmul.empty())
+    return "8";
+  if (lmul != "1" && lmul != "2" && lmul != "4" && lmul != "8")
+    throw std::runtime_error("TRITON_RISCV_LMUL must be one of 1, 2, 4, 8; got '" +
+                             lmul + "'");
+  return lmul;
+}
+
+void setRISCV64CodegenOptions() {
+  const std::string regLMUL = "-riscv-v-register-bit-width-lmul=" + getRISCVLMUL();
+  const char *const args[] = {
+      "triton-cpu",
+      "--tail-folding-policy=prefer-fold-tail",
+      "-riscv-v-vector-bits-min=256",
+      regLMUL.c_str(),
+      "-force-tail-folding-style=data-with-evl",
+  };
+  std::vector<std::string> extra;
+  {
+    // TRITON_RISCV_LLVM_ARGS: extra whitespace-separated LLVM options, e.g.
+    // "-custom-sink -custom-remat -custom-a".
+    std::istringstream iss(mlir::triton::tools::getStrEnv("TRITON_RISCV_LLVM_ARGS"));
+    for (std::string tok; iss >> tok;)
+      extra.push_back(tok);
+  }
+  std::vector<const char *> argv(std::begin(args), std::end(args));
+  for (const auto &e : extra)
+    argv.push_back(e.c_str());
+  llvm::cl::ParseCommandLineOptions(argv.size(), argv.data());
 }
 
 void initializeHostTarget() {
   static std::once_flag initFlag;
   std::call_once(initFlag, []() {
-    if (llvm::InitializeNativeTarget())
-      throw std::runtime_error("LLVM native target is not available");
-    if (llvm::InitializeNativeTargetAsmPrinter())
-      throw std::runtime_error("LLVM native target assembly printer is not "
-                               "available");
+    if (isNativeTarget()) {
+      if (llvm::InitializeNativeTarget())
+        throw std::runtime_error("LLVM native target is not available");
+      if (llvm::InitializeNativeTargetAsmPrinter())
+        throw std::runtime_error("LLVM native target assembly printer is not "
+                                 "available");
+      return;
+    }
+    LLVMInitializeRISCVTargetInfo();
+    LLVMInitializeRISCVTarget();
+    LLVMInitializeRISCVTargetMC();
+    LLVMInitializeRISCVAsmPrinter();
   });
 
   // LLVM's global thread pool is not fork-safe. Triton kernels are small, so
   // disabling LLVM's internal parallelism also avoids unnecessary overhead.
   llvm::parallel::strategy = llvm::hardware_concurrency(1);
+
+  if (!isNativeTarget()) {
+    static std::once_flag riscvFlag;
+    std::call_once(riscvFlag, setRISCV64CodegenOptions);
+  }
 }
 
 void setLLVMBooleanOption(const std::string &name, bool value) {
@@ -90,7 +167,8 @@ createHostTargetMachine(llvm::Module &module, bool enableFpFusion,
 
   bool disableLLVMOpt = mlir::triton::tools::getBoolEnv("DISABLE_LLVM_OPT");
   return std::unique_ptr<llvm::TargetMachine>{target->createTargetMachine(
-      module.getTargetTriple(), llvm::sys::getHostCPUName(), "", options,
+      module.getTargetTriple(), getHostCPUName(), getHostFeatureString(),
+      options,
       llvm::Reloc::PIC_, std::nullopt,
       disableLLVMOpt ? llvm::CodeGenOptLevel::None
                      : llvm::CodeGenOptLevel::Aggressive)};
@@ -171,12 +249,24 @@ void setHostTarget(llvm::Module &module) {
     throw std::runtime_error("target lookup error: " + error);
 
   std::unique_ptr<llvm::TargetMachine> machine{target->createTargetMachine(
-      module.getTargetTriple(), llvm::sys::getHostCPUName(), "", {},
+      module.getTargetTriple(), getHostCPUName(), getHostFeatureString(), {},
       llvm::Reloc::PIC_)};
   module.setDataLayout(machine->createDataLayout());
+
+  if (isNativeTarget())
+    return;
+
+  // Let IR-level passes (e.g. the vectorizer) see the target CPU/features.
+  for (llvm::Function &function : module.functions()) {
+    function.addFnAttr("target-cpu", kRISCV64CPU);
+    function.addFnAttr("target-features", kRISCV64Features);
+  }
 }
 
 std::set<std::string> getCPUFeatures() {
+  if (!isNativeTarget())
+    return {"+m", "+f", "+d", "+v", "+zvfbfmin"};
+
   auto features = llvm::sys::getHostCPUFeatures();
 
   std::set<std::string> result;
@@ -202,8 +292,8 @@ std::set<std::string> getCPUFeatures() {
 } // namespace
 
 void init_triton_cpu_llvm(py::module_ &m) {
-  m.def("get_cpu_triple", []() { return llvm::sys::getProcessTriple(); });
-  m.def("get_cpu_name", []() { return llvm::sys::getHostCPUName().str(); });
+  m.def("get_cpu_triple", []() { return getHostTargetTriple(); });
+  m.def("get_cpu_name", []() { return getHostCPUName(); });
   m.def("get_cpu_features", &getCPUFeatures);
   m.def("set_host_target",
         [](llvm::Module *module) { setHostTarget(*module); });

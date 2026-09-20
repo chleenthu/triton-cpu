@@ -932,16 +932,20 @@ void init_triton_llvm(py::module_ &m) {
     std::call_once(init_flag, []() {
       // Initialize only the GPU targets Triton emits code for. Initializing all
       // targets would also require linking LLVM's host target libraries.
+#ifdef TRITON_LLVM_HAS_NVPTX
       LLVMInitializeNVPTXTargetInfo();
       LLVMInitializeNVPTXTarget();
       LLVMInitializeNVPTXTargetMC();
       LLVMInitializeNVPTXAsmPrinter();
+#endif
 
+#ifdef TRITON_LLVM_HAS_AMDGPU
       LLVMInitializeAMDGPUTargetInfo();
       LLVMInitializeAMDGPUTarget();
       LLVMInitializeAMDGPUTargetMC();
       LLVMInitializeAMDGPUAsmParser();
       LLVMInitializeAMDGPUAsmPrinter();
+#endif
 
       // Installed exactly once, before any target compilation. The dispatcher
       // reads thread-local state and is safe for parallel codegen.

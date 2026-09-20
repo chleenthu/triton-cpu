@@ -1,0 +1,51 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 90321e2f7..52dee6660 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -393,13 +393,18 @@ if(TRITON_BUILD_PYTHON_MODULE)
+ 
+     # LLVM
+     LLVMPasses
+-    LLVMNVPTXCodeGen
+-    LLVMAMDGPUCodeGen
+-    LLVMAMDGPUAsmParser
+ 
+     Python3::Module
+     nanobind-static
+   )
++  if ("NVPTX" IN_LIST LLVM_TARGETS_TO_BUILD)
++    list(APPEND TRITON_LIBRARIES LLVMNVPTXCodeGen)
++    add_compile_definitions(TRITON_LLVM_HAS_NVPTX)
++  endif()
++  if ("AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
++    list(APPEND TRITON_LIBRARIES LLVMAMDGPUCodeGen LLVMAMDGPUAsmParser)
++    add_compile_definitions(TRITON_LLVM_HAS_AMDGPU)
++  endif()
+ 
+   # Define triton library
+   string(JOIN "," TRITON_BACKENDS_TUPLE ${TRITON_CODEGEN_BACKENDS})
+diff --git a/python/src/llvm.cc b/python/src/llvm.cc
+index b3710ebdf..c8f869a2e 100644
+--- a/python/src/llvm.cc
++++ b/python/src/llvm.cc
+@@ -932,16 +932,20 @@ void init_triton_llvm(py::module_ &m) {
+     std::call_once(init_flag, []() {
+       // Initialize only the GPU targets Triton emits code for. Initializing all
+       // targets would also require linking LLVM's host target libraries.
++#ifdef TRITON_LLVM_HAS_NVPTX
+       LLVMInitializeNVPTXTargetInfo();
+       LLVMInitializeNVPTXTarget();
+       LLVMInitializeNVPTXTargetMC();
+       LLVMInitializeNVPTXAsmPrinter();
++#endif
+ 
++#ifdef TRITON_LLVM_HAS_AMDGPU
+       LLVMInitializeAMDGPUTargetInfo();
+       LLVMInitializeAMDGPUTarget();
+       LLVMInitializeAMDGPUTargetMC();
+       LLVMInitializeAMDGPUAsmParser();
+       LLVMInitializeAMDGPUAsmPrinter();
++#endif
+ 
+       // Installed exactly once, before any target compilation. The dispatcher
+       // reads thread-local state and is safe for parallel codegen.

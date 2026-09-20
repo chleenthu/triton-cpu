@@ -393,13 +393,19 @@ if(TRITON_BUILD_PYTHON_MODULE)
 
     # LLVM
     LLVMPasses
-    LLVMNVPTXCodeGen
-    LLVMAMDGPUCodeGen
-    LLVMAMDGPUAsmParser
+    LLVMMIRParser
 
     Python3::Module
     nanobind-static
   )
+  if ("NVPTX" IN_LIST LLVM_TARGETS_TO_BUILD)
+    list(APPEND TRITON_LIBRARIES LLVMNVPTXCodeGen)
+    add_compile_definitions(TRITON_LLVM_HAS_NVPTX)
+  endif()
+  if ("AMDGPU" IN_LIST LLVM_TARGETS_TO_BUILD)
+    list(APPEND TRITON_LIBRARIES LLVMAMDGPUCodeGen LLVMAMDGPUAsmParser)
+    add_compile_definitions(TRITON_LLVM_HAS_AMDGPU)
+  endif()
 
   # Define triton library
   string(JOIN "," TRITON_BACKENDS_TUPLE ${TRITON_CODEGEN_BACKENDS})

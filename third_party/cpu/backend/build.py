@@ -14,6 +14,11 @@ from triton.runtime.cache import get_cache_manager
 
 _system_root = os.getenv("TRITON_SYS_PATH", default="/usr/local")
 
+
+def _native_target():
+    # TRITON_CPU_TARGET=native builds for the build host instead of riscv64.
+    return os.environ.get("TRITON_CPU_TARGET") == "native"
+
 # Locate the packaged TritonCPU runtime libraries.
 try:
     _triton_c_dir = importlib.resources.files(triton).joinpath("_C")
@@ -67,6 +72,22 @@ def _build_cpu_shared_object(name, src, srcdir, libraries, ccflags, source_kind)
         if apple_clang:
             libraries.pop()
 
+    if _native_target():
+        # The project's clang has no default triple, so name the host explicitly.
+        cpu_flags += [f"--target={machine}-unknown-linux-gnu", "-fuse-ld=lld"]
+    else:
+        # Cross-compile for riscv64 (the project's clang has no default triple).
+        toolchain_dir = os.environ.get("TRITON_RISCV_TOOLCHAIN", os.path.expanduser("~/toolchain"))
+        sysroot = os.environ.get("TRITON_RISCV_SYSROOT", os.path.join(toolchain_dir, "sysroot"))
+        cpu_flags += [
+            "--target=riscv64-unknown-linux-gnu",
+            "-march=rv64gcv",
+            "-mabi=lp64d",
+            f"--sysroot={sysroot}",
+            f"--gcc-toolchain={toolchain_dir}",
+            "-fuse-ld=lld",
+        ]
+
     for library_dir in library_dirs:
         cpu_flags.extend(["-Wl,-rpath", library_dir])
 
@@ -89,7 +110,10 @@ def _build_cpu_shared_object(name, src, srcdir, libraries, ccflags, source_kind)
                     print("Warning: TRITON_LOCAL_LIBOMP_PATH is not set for Apple clang. OpenMP is disabled.")
             else:
                 cpu_flags.append("-fopenmp")
-                if libomp_path:
+                if libomp_path and _native_target():
+                    # The project's clang ships no omp.h/libomp for the host.
+                    cpu_flags += [f"-I{libomp_path}/include", f"-L{libomp_path}/lib", f"-Wl,-rpath,{libomp_path}/lib"]
+                elif libomp_path:
                     print("Info: Ignoring TRITON_LOCAL_LIBOMP_PATH for non-Apple clang compiler")
     elif source_kind == "assembly":
         # Preserve .file directives in generated host assembly.
@@ -104,7 +128,11 @@ def _build_cpu_shared_object(name, src, srcdir, libraries, ccflags, source_kind)
 
 
 def compile_launcher_from_src(src, name):
-    key = hashlib.md5(src.encode("utf-8")).hexdigest()
+    # The launcher source is identical for every target, so mix the target into
+    # the key: a cache shared between native and riscv64 runs would otherwise
+    # hand back a .so built for the wrong architecture.
+    target_tag = os.environ.get("TRITON_CPU_TARGET", "riscv64")
+    key = hashlib.md5(f"{target_tag}\n{src}".encode("utf-8")).hexdigest()
     cache = get_cache_manager(key)
     cache_path = cache.get_file(f"{name}.so")
     if cache_path is None:
@@ -134,7 +162,7 @@ def build_kernel_from_asm(src_path, srcdir):
         "kernel",
         src_path,
         srcdir,
-        libraries=["m", "TritonCPURuntime", "sleef"],
+        libraries=["m", "TritonCPURuntime", "sleef"] if _native_target() else ["m"],
         ccflags=[],
         source_kind="assembly",
     )
