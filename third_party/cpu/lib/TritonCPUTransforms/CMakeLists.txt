@@ -11,6 +11,7 @@ add_triton_library(TritonCPUTransforms
     ConvertVectorContractToArmNeonBFMMLA.cpp
     DecomposeFpConversions.cpp
     OptimizeMasks.cpp
+    TailMaskToEVL.cpp
 
     DEPENDS
     TritonCPUTransformsPassIncGen

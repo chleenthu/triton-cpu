@@ -1,0 +1,186 @@
+chlee@miffy-world:~/triton-cpu$ ./gen.sh
+=== compiling k128983565197728 (triton_per_fused__to_copy_add_embedding_mean_mul_pow_rsqrt_0) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564924816 (triton_tem_fused__to_copy_add_addmm_embedding_mean_mul_pow_rsqrt_t_view_1) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=354 (GPR=21)
+SLIL: 53889
+=== compiling k128983565200224 (triton_poi_fused_neg_slice_transpose_view_2) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983565278784 (triton_poi_fused_cat_neg_slice_transpose_view_3) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564920544 (triton_tem_fused_addmm_t_view_4) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=354 (GPR=21)
+SLIL: 53889
+=== compiling k128983564922368 (triton_poi_fused_neg_slice_transpose_view_5) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983565201136 (triton_poi_fused_cat_neg_slice_transpose_view_6) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564918624 (triton_poi_fused_zeros_7) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983565196336 (triton_poi_fused__to_copy_add_arange_bmm_cat_expand_index_copy_mul_transpose_unsqueeze_view_zeros_8) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983565287040 (triton_poi_fused__to_copy_add_bmm_cat_expand_mul_transpose_unsqueeze_view_9) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983565275424 (triton_poi_fused_clone_expand_unsqueeze_10) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564926544 (triton_tem_fused__to_copy__unsafe_view_add_bmm_cat_clone_expand_mul_transpose_unsqueeze_view_11) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=80 (GPR=38)
+SLIL: 32
+====================================================
+PRP: VR=0 (GPR=11)
+SLIL: 0
+====================================================
+PRP: VR=492 (GPR=52)
+SLIL: 52870
+=== compiling k128983564921600 (triton_per_fused__softmax__to_copy_add_expand_le_lift_fresh_mul_scalar_tensor_unsqueeze_view_where_12) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564202000 (triton_poi_fused_add_arange_index_copy_transpose_view_zeros_13) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564197200 (triton_tem_fused__softmax__to_copy__unsafe_view_bmm_clone_expand_unsqueeze_view_14) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=352 (GPR=36)
+SLIL: 52960
+=== compiling k128983564203200 (triton_tem_fused_clone_mm_t_transpose_view_15) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=360 (GPR=24)
+SLIL: 54027
+=== compiling k128983564192400 (triton_per_fused__to_copy__unsafe_view_add_embedding_mean_mul_pow_rsqrt_16) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564190480 (triton_tem_fused_mm_t_view_17) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=354 (GPR=21)
+SLIL: 53889
+=== compiling k128983564398704 (triton_tem_fused__unsafe_view_mm_mul_silu_t_view_18) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=354 (GPR=21)
+SLIL: 53889
+=== compiling k128983564387184 (triton_tem_fused__unsafe_view_mm_mul_silu_t_view_19) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=354 (GPR=21)
+SLIL: 53889
+=== compiling k128983564399904 (triton_per_fused__to_copy__unsafe_view_add_embedding_mean_mul_pow_rsqrt_20) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564386656 (triton_per_fused__to_copy__unsafe_view_add_embedding_mean_mul_pow_rsqrt_21) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564401632 (triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_22) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564252592 (triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_23) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564246976 (triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_24) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564242608 (triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_25) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564241024 (triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_26) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983564250240 (triton_tem_fused__to_copy__unsafe_view_add_mean_mm_mul_pow_rsqrt_t_view_27) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=354 (GPR=21)
+SLIL: 53889
+=== compiling k128983563884176 (triton_poi_fused_add_copy__28) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983920091936 (triton_per_fused__to_copy_add_embedding_mean_mul_pow_rsqrt_0) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983924608736 (triton_tem_fused__to_copy_add_addmm_embedding_mean_mul_pow_rsqrt_t_view_1) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=76 (GPR=5)
+SLIL: 7311
+=== compiling k128983922004592 (triton_poi_fused_neg_slice_transpose_view_2) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983920751856 (triton_poi_fused_cat_neg_slice_transpose_view_3) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983920306464 (triton_tem_fused_addmm_t_view_4) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=76 (GPR=5)
+SLIL: 7311
+=== compiling k128983920514896 (triton_poi_fused_neg_slice_transpose_view_5) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983920192976 (triton_poi_fused_cat_neg_slice_transpose_view_6) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983924615648 (triton_poi_fused__to_copy_add_arange_bmm_cat_expand_index_copy_mul_transpose_unsqueeze_view_7) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983918787888 (triton_per_fused__to_copy__unsafe_view_add_arange_bmm_cat_clone_expand_mul_transpose_unsqueeze_view_8) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983926345392 (triton_per_fused__softmax__to_copy_add_arange_expand_le_lift_fresh_mul_scalar_tensor_unsqueeze_view_where_9) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983923918496 (triton_poi_fused_add_arange_index_copy_transpose_view_10) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983924781840 (triton_red_fused__softmax__to_copy__unsafe_view_bmm_clone_expand_unsqueeze_view_11) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983920296384 (triton_tem_fused_mm_t_transpose_view_12) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=76 (GPR=5)
+SLIL: 7311
+=== compiling k128983920309488 (triton_per_fused__to_copy__unsafe_view_add_embedding_mean_mul_pow_rsqrt_13) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983926352544 (triton_tem_fused_mm_t_view_14) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=76 (GPR=5)
+SLIL: 7311
+=== compiling k128983914115568 (triton_tem_fused__unsafe_view_mm_mul_silu_t_view_15) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=76 (GPR=5)
+SLIL: 7311
+=== compiling k128983926347792 (triton_tem_fused__unsafe_view_mm_mul_silu_t_view_16) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=76 (GPR=5)
+SLIL: 7311
+=== compiling k128983923930784 (triton_per_fused__to_copy__unsafe_view_add_embedding_mean_mul_pow_rsqrt_17) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128982366942256 (triton_tem_fused_addmm_t_view_18) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=76 (GPR=5)
+SLIL: 7311
+=== compiling k128983920094048 (triton_poi_fused__to_copy_add_arange_bmm_cat_expand_index_copy_mul_transpose_unsqueeze_view_19) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983914113264 (triton_per_fused__to_copy__unsafe_view_add_embedding_mean_mul_pow_rsqrt_20) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983914265328 (triton_tem_fused__to_copy_add_mean_mm_mul_pow_rsqrt_t_view_21) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=76 (GPR=5)
+SLIL: 7311
+=== compiling k128983914254768 (triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_22) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983920746000 (triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_23) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983924455216 (triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_24) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983915562560 (triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_25) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983924779776 (triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_26) -> riscv64 ===
+Custom Sink disabled.
+=== compiling k128983912270288 (triton_tem_fused__to_copy__unsafe_view_add_mean_mm_mul_pow_rsqrt_t_view_27) -> riscv64 ===
+Custom Sink disabled.
+====================================================
+PRP: VR=76 (GPR=5)
+SLIL: 7311
+=== compiling k128983919452768 (triton_poi_fused_add_copy__28) -> riscv64 ===
+Custom Sink disabled.
+
+58/58 kernels compiled to riscv64 .so under /home/chlee/qwen_triton_engine/rebuilt_kernels
+Next: scripts/gen_qwen_driver.py
+wrote /home/chlee/qwen_triton_engine/driver/driver.c  (58 kernels, 407 persistent buffers, 4 step inputs)
+compiling driver: /home/chlee/llvm-project/install/bin/clang /home/chlee/qwen_triton_engine/driver/driver.c -O3 -Wno-psabi --target=riscv64-unknown-linux-gnu -march=rv64gcv -mabi=lp64d -fuse-ld=lld --sysroot=/home/chlee/toolchain/sysroot --gcc-toolchain=/home/chlee/toolchain -fopenmp -ldl -Wl,-Bstatic -lomp -Wl,-Bdynamic -o /home/chlee/qwen_triton_engine/driver/driver
+
+TTFT: 5181.694 ms  (prefill 3477.648 ms + decode0 1704.047 ms)
+TPOT: 1935.363 ms  (decode1 - decode0)
+PASS

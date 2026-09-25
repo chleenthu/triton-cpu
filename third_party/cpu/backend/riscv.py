@@ -79,6 +79,12 @@ def _infer_triton_type(value) -> str:
     raise ValueError(f"Cannot infer a Triton type for {type(value).__name__}; pass signature=... explicitly")
 
 
+# Default benchmark repetitions of the generated runners (standalone kernel
+# ELFs and gen_qwen_driver.py --only); TRITON_BENCH_ITERS / TRITON_BENCH_WARMUP
+# override them at run time on the board. ITERS=0 disables timing.
+DEFAULT_BENCH_ITERS = 100
+DEFAULT_BENCH_WARMUP = 10
+
 _FLOAT_C_TYPES = ("float", "double", "_Float16", "__bf16")
 
 
@@ -228,7 +234,7 @@ def generate_runner(kernel_name: str, signature: dict, arguments: dict, grid: Se
         "int main(void) {",
         *declarations,
         "",
-        "  long bench_iters = 0, bench_warmup = 0;",
+        f"  long bench_iters = {DEFAULT_BENCH_ITERS}, bench_warmup = {DEFAULT_BENCH_WARMUP};",
         "  const char *bench_env;",
         '  if ((bench_env = getenv("TRITON_BENCH_ITERS"))) bench_iters = atol(bench_env);',
         '  if ((bench_env = getenv("TRITON_BENCH_WARMUP"))) bench_warmup = atol(bench_env);',
