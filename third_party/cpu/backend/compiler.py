@@ -209,6 +209,10 @@ class CPUBackend(BaseBackend):
         cpu.passes.ttcpuir.add_triton_cpu_canonicalizer(pm)
         cpu.passes.ttcpuir.add_optimize_masks(pm)
         passes.common.add_canonicalizer(pm)
+        # Experimental (RISC-V): turn tail masks of masked loads/stores into
+        # vector.create_mask so MemoryOpToLLVM can emit vp.load/vp.store.
+        if os.getenv("TRITON_VSETVL_MINE"):
+            cpu.passes.ttcpuir.add_tail_mask_to_evl(pm)
         if (ukernels := opt.get_ukernels()):
             # For further analysis simplification
             cpu.passes.ttcpuir.add_loop_invariant_code_motion(pm)

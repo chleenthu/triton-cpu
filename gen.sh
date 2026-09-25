@@ -7,6 +7,7 @@ export LDFLAGS="-fuse-ld=lld"
 export PATH=$HOME/ccache/install/bin:$PATH
 
 export TRITON_RISCV_LMUL=8
+export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
 export OMP_NUM_THREADS=8
 export TORCHINDUCTOR_CACHE_DIR=$HOME/torchinductor_cache
 export TRITON_LOCAL_LIBOMP_PATH=$HOME/.triton-native-libomp

@@ -91,11 +91,16 @@ std::string getRISCVLMUL() {
 
 void setRISCV64CodegenOptions() {
   const std::string regLMUL = "-riscv-v-register-bit-width-lmul=" + getRISCVLMUL();
+  // Also cap the LMUL of the fixed-length vectors Triton emits; the flag above
+  // only affects the autovectorizers.
+  const std::string fixedLMUL =
+      "-riscv-v-fixed-length-vector-lmul-max=" + getRISCVLMUL();
   const char *const args[] = {
       "triton-cpu",
       "--tail-folding-policy=prefer-fold-tail",
       "-riscv-v-vector-bits-min=256",
       regLMUL.c_str(),
+      fixedLMUL.c_str(),
       "-force-tail-folding-style=data-with-evl",
   };
   std::vector<std::string> extra;

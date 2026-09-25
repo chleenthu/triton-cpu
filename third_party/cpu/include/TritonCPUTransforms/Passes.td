@@ -75,6 +75,28 @@ def OptimizeMasks : Pass<"triton-cpu-optimize-masks", "mlir::ModuleOp"> {
                              "mlir::triton::cpu::TritonCPUDialect"];
 }
 
+def TailMaskToEVL : Pass<"triton-cpu-tail-mask-to-evl", "mlir::ModuleOp"> {
+    let summary = "Express tail masks of masked loads/stores as vector.create_mask.";
+    let description = [{
+        For every 1-D vector.maskedload / vector.maskedstore whose mask is a
+        tail mask (lanes [0, L) active, lanes [L, N) inactive), compute the
+        scalar length L from the ops that form the mask (constant prefixes,
+        broadcasts of scalar conditions, and/or, shape_cast, and comparisons
+        of an iota plus offset against a splat bound) and replace the mask
+        with `vector.create_mask L`. MemoryOpToLLVM then lowers such accesses
+        to llvm.vp.load / llvm.vp.store with EVL = L (RISC-V vsetvli).
+        A masked load whose lanes >= L are never observed (every use goes
+        through lane-wise ops into a select or masked store with a mask no
+        larger than L) gets a ub.poison pass-through, so no merge is needed.
+    }];
+
+    let constructor = "mlir::triton::cpu::createTailMaskToEVL()";
+
+    let dependentDialects = ["mlir::arith::ArithDialect",
+                             "mlir::ub::UBDialect",
+                             "mlir::vector::VectorDialect"];
+}
+
 def ConvertDotProduct : Pass<"triton-cpu-convert-dot-product", "mlir::ModuleOp"> {
     let summary = "Convert dot product op.";
     let description = [{

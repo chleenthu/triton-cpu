@@ -140,6 +140,9 @@ void init_triton_cpu_passes_ttcpuir(py::module_ &m) {
   m.def("add_optimize_masks", [](mlir::PassManager &pm) {
     pm.addPass(mlir::triton::cpu::createOptimizeMasks());
   });
+  m.def("add_tail_mask_to_evl", [](mlir::PassManager &pm) {
+    pm.addPass(mlir::triton::cpu::createTailMaskToEVL());
+  });
   m.def("add_convert_dot_product", [](mlir::PassManager &pm,
                                       bool useHorizontalSum) {
     pm.addPass(mlir::triton::cpu::createConvertDotProduct(useHorizontalSum));
