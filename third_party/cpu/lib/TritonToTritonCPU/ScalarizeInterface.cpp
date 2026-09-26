@@ -1,6 +1,7 @@
 #include "cpu/include/ScalarizePass/ScalarizeInterfaceImpl.h"
 
 #include "cpu/include/ScalarizePass/ScalarizeInterface.h"
+#include "cpu/include/Dialect/TritonCPU/IR/Dialect.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
@@ -252,6 +253,49 @@ template <> struct ScalariztionFunctor<TransOp> {
   }
 };
 
+// triton_cpu.tail_mask: element (i_0, ..., i_{n-1}) is AND_d (i_d < bound_d),
+// so a scalarized load/store computes it from the bounds instead of storing
+// the mask to a temporary buffer.
+struct TailMaskScalarizeInterface
+    : public ScalarizeInterface::ExternalModel<TailMaskScalarizeInterface,
+                                               triton::cpu::TailMaskOp> {
+
+  bool canComputeScalarValue(Operation *op, Value vals) const { return true; }
+
+  Value computeScalarValue(Operation *op, Value vals, ArrayRef<int64_t> indices,
+                           PatternRewriter &rewriter) const {
+    auto def = vals.getDefiningOp<triton::cpu::TailMaskOp>();
+    auto i32Ty = rewriter.getI32Type();
+    SmallVector<Value> idxVals;
+    for (int64_t idx : indices)
+      idxVals.push_back(
+          arith::ConstantIntOp::create(rewriter, def.getLoc(), i32Ty, idx));
+    return build(def, idxVals, rewriter);
+  }
+
+  Value computeScalarValueForLoop(Operation *op, Value vals, ValueRange indices,
+                                  PatternRewriter &rewriter) const {
+    auto def = vals.getDefiningOp<triton::cpu::TailMaskOp>();
+    SmallVector<Value> idxVals;
+    for (Value idx : indices)
+      idxVals.push_back(arith::IndexCastOp::create(
+          rewriter, def.getLoc(), rewriter.getI32Type(), idx));
+    return build(def, idxVals, rewriter);
+  }
+
+  static Value build(triton::cpu::TailMaskOp def, ArrayRef<Value> indices,
+                     PatternRewriter &rewriter) {
+    Location loc = def.getLoc();
+    Value on = arith::ConstantIntOp::create(rewriter, loc,
+                                            rewriter.getI1Type(), 1);
+    for (auto [bound, idx] : llvm::zip(def.getBounds(), indices)) {
+      Value inside = arith::CmpIOp::create(
+          rewriter, loc, arith::CmpIPredicate::slt, idx, bound);
+      on = arith::AndIOp::create(rewriter, loc, on, inside);
+    }
+    return on;
+  }
+};
 } // namespace
 
 template <typename OpType> static void registerOne(MLIRContext *ctx) {
@@ -268,6 +312,11 @@ void mlir::triton::cpu::registerTritonOpScalarizeExternalModels(
     registerAll<AddPtrOp, BroadcastOp, ExpandDimsOp, TransOp, SplatOp,
                 MakeRangeOp>(ctx);
   });
+  registry.addExtension(
+      +[](MLIRContext *ctx, triton::cpu::TritonCPUDialect *dialect) {
+        triton::cpu::TailMaskOp::attachInterface<TailMaskScalarizeInterface>(
+            *ctx);
+      });
   registry.addExtension(+[](MLIRContext *ctx, arith::ArithDialect *dialect) {
     registerAll<arith::AddFOp, arith::AddIOp, arith::CmpFOp, arith::CmpIOp,
                 arith::DivFOp, arith::DivSIOp, arith::MulIOp, arith::MulFOp,

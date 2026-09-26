@@ -116,6 +116,12 @@ class CPUOptions:
         return ukernels
 
 
+def _vsetvl_enabled():
+    # TRITON_VSETVL_MINE: vsetvli-loop loads/stores, TRITON_VSETVL_LANE:
+    # vp.load/vp.store, TRITON_VSETVL_REDUCE: masked (vp.reduce) reductions.
+    return any(os.getenv(v) for v in ("TRITON_VSETVL_MINE", "TRITON_VSETVL_LANE", "TRITON_VSETVL_REDUCE"))
+
+
 class CPUBackend(BaseBackend):
 
     @staticmethod
@@ -183,6 +189,10 @@ class CPUBackend(BaseBackend):
         # TTIR -> TTCIR
         pm = ir.pass_manager(mod.context)
         pm.enable_debug()
+        # Experimental (RISC-V): make box-shaped (tail) masks explicit as
+        # triton_cpu.tail_mask so the conversions below carry the bounds.
+        if _vsetvl_enabled():
+            cpu.passes.ttcpuir.add_analyze_tail_masks(pm)
         cpu.passes.ttcpuir.add_scalarize(pm, True)
         cpu.passes.ttcpuir.add_convert_memory_ops(pm, True, opt.assume_in_bounds)
         cpu.passes.ttcpuir.add_convert_ptr_ops(pm)
@@ -190,7 +200,8 @@ class CPUBackend(BaseBackend):
         cpu.passes.ttcpuir.add_convert_elem_manip_ops(pm)
         cpu.passes.ttcpuir.add_convert_dot_op(pm)
         cpu.passes.ttcpuir.add_convert_histogram_op(pm)
-        cpu.passes.ttcpuir.add_convert_reduction_op(pm, True, False)
+        cpu.passes.ttcpuir.add_convert_reduction_op(pm, True, False,
+                                                    use_masked_reduction=bool(os.getenv("TRITON_VSETVL_REDUCE")))
         cpu.passes.ttcpuir.add_convert_scan_op(pm)
         cpu.passes.ttcpuir.add_convert_cf_ops(pm)
         cpu.passes.ttcpuir.add_convert_atomic_ops(pm)
@@ -209,10 +220,6 @@ class CPUBackend(BaseBackend):
         cpu.passes.ttcpuir.add_triton_cpu_canonicalizer(pm)
         cpu.passes.ttcpuir.add_optimize_masks(pm)
         passes.common.add_canonicalizer(pm)
-        # Experimental (RISC-V): turn tail masks of masked loads/stores into
-        # vector.create_mask so MemoryOpToLLVM can emit vp.load/vp.store.
-        if os.getenv("TRITON_VSETVL_MINE"):
-            cpu.passes.ttcpuir.add_tail_mask_to_evl(pm)
         if (ukernels := opt.get_ukernels()):
             # For further analysis simplification
             cpu.passes.ttcpuir.add_loop_invariant_code_motion(pm)
@@ -236,19 +243,28 @@ class CPUBackend(BaseBackend):
         if 'avx512f' in self.cpu_features:
             cpu.passes.ttcpuir.add_convert_dot_to_fma(pm)
         cpu.passes.ttcpuir.add_convert_dot_generic(pm)
-        promote_bf16_to_fp32 = self.cpu_arch == "x86_64" and "avx512bf16" not in self.cpu_features
+        # riscv64: bf16 memory ops are done on i16 (as on x86 without avx512bf16).
+        promote_bf16_to_fp32 = (self.cpu_arch == "riscv64" or
+                                (self.cpu_arch == "x86_64" and "avx512bf16" not in self.cpu_features))
         # We don't have any lowering for mixed precision matmuls, so always use casts for now
         convert_mixed_precision_matmul = True
         # We don't have math lib functions for FP8, FP16, BF16. Promote such operations to FP32.
         promote_lib_math_to_fp32 = True
         cpu.passes.ttcpuir.add_convert_unsupported_ops(pm, promote_bf16_to_fp32, convert_mixed_precision_matmul,
                                                        promote_lib_math_to_fp32)
-        # riscv64 targets +v without zvfbfmin, so native bf16 vector converts would be scalarized by LLVM.
+        # riscv64: the board (SpacemiT X60) has no zvfbfmin, so native bf16 vector converts
+        # (vfwcvtbf16 / vfncvtbf16) would raise SIGILL; do them with integer shifts instead.
         decompose_bf16_conv = (self.cpu_arch == "riscv64" or
                                (self.cpu_arch == "x86_64" and "avx512bf16" not in self.cpu_features
                                 and "avxneconvert" not in self.cpu_features))
         decompose_fp8_conv = True
         cpu.passes.ttcpuir.add_decompose_fp_conversions(pm, decompose_bf16_conv, decompose_fp8_conv)
+        # Experimental (RISC-V): turn tail masks of masked loads/stores into
+        # vector.create_mask so MemoryOpToLLVM can emit vp.load/vp.store. Runs
+        # after the bf16 -> i16 memory rewrite so the loads it marks (poison
+        # pass-through) are the final ones.
+        if _vsetvl_enabled():
+            cpu.passes.ttcpuir.add_tail_mask_to_evl(pm)
         if os.getenv("TRITON_CPU_UNROLL_AND_REORDER_ELEMENTWISE_OPS", "0") == "1":
             cpu.passes.ttcpuir.add_unroll_and_reorder_elementwise_ops(pm, ",".join(self.cpu_features))
         passes.common.add_cse(pm)

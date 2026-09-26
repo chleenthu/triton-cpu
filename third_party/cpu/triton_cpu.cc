@@ -91,6 +91,9 @@ void init_triton_cpu_passes_ttcpuir(py::module_ &m) {
       .value("OneDNN", cpu::Ukernels::OneDNN)
       .value("XSMM", cpu::Ukernels::XSMM);
 
+  m.def("add_analyze_tail_masks", [](mlir::PassManager &pm) {
+    pm.addPass(mlir::triton::cpu::createAnalyzeTailMasks());
+  });
   m.def("add_scalarize", [](mlir::PassManager &pm, bool skip_gather_scatter) {
     pm.addPass(
         mlir::triton::cpu::createScalarizeUsingForOpPass(skip_gather_scatter));
@@ -118,10 +121,14 @@ void init_triton_cpu_passes_ttcpuir(py::module_ &m) {
   });
   m.def("add_convert_reduction_op",
         [](mlir::PassManager &pm, bool use_reduction_op,
-           bool use_multidim_reduction_op) {
+           bool use_multidim_reduction_op, bool use_masked_reduction) {
           pm.addPass(mlir::triton::cpu::createConvertReductionOp(
-              use_reduction_op, use_multidim_reduction_op));
-        });
+              use_reduction_op, use_multidim_reduction_op,
+              use_masked_reduction));
+        },
+        py::arg("pm"), py::arg("use_reduction_op"),
+        py::arg("use_multidim_reduction_op"),
+        py::arg("use_masked_reduction") = false);
   m.def("add_convert_scan_op", [](mlir::PassManager &pm) {
     pm.addPass(mlir::triton::cpu::createConvertScanOp());
   });

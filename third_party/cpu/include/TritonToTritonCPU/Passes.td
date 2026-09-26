@@ -27,6 +27,25 @@ def ConvertMemoryOps : Pass<"triton-cpu-convert-memory-ops", "mlir::ModuleOp"> {
                              "mlir::triton::cpu::TritonCPUDialect"];
 }
 
+def AnalyzeTailMasks : Pass<"triton-cpu-analyze-tail-masks", "mlir::ModuleOp"> {
+    let summary = "Make box-shaped (tail) masks explicit as triton_cpu.tail_mask.";
+    let description = [{
+        For every mask of tt.load / tt.store and every tensor condition of
+        arith.select, trace how the mask is formed (arith.cmpi, arith.andi,
+        arith.ori, arith.addi, arith.subi, tt.make_range, tt.splat,
+        tt.expand_dims, tt.broadcast, tt.trans, arith.constant). If element
+        (i_0, ..., i_{n-1}) is on exactly when i_d < B_d for every d, replace
+        the mask operand with `triton_cpu.tail_mask B_0, ..., B_{n-1}`, so
+        the TTIR -> TTCIR conversions can carry the bounds forward
+        (vector.create_mask, per-row masks, masked reductions).
+    }];
+    let constructor = "mlir::triton::cpu::createAnalyzeTailMasks()";
+
+    let dependentDialects = ["mlir::arith::ArithDialect",
+                             "mlir::triton::TritonDialect",
+                             "mlir::triton::cpu::TritonCPUDialect"];
+}
+
 def ConvertElementwiseOps : Pass<"triton-cpu-convert-elementwise-ops", "mlir::ModuleOp"> {
     let summary = "Convert elementwise ops.";
     let description = [{
@@ -125,6 +144,10 @@ def ConvertReductionOp : Pass<"triton-cpu-convert-reduction", "mlir::ModuleOp"> 
         Option<"useReductionOp", "use-reduction-op",
                "bool", /*default*/"false",
                 "Use vector::ReductionOp and its default lowering when possible.">,
+
+        Option<"useMaskedReduction", "use-masked-reduction",
+               "bool", /*default*/"false",
+                "Reduce select(tail mask, x, identity) as a masked vector.reduction over x.">,
     ];
 
     let dependentDialects = ["mlir::arith::ArithDialect",

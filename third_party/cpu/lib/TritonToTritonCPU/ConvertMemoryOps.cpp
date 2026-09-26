@@ -37,6 +37,43 @@ using namespace mlir::triton::cpu;
 
 namespace {
 
+// Mask of the row at `rowIndices` (indices of all dims but the last) of an
+// n-D memory op whose mask is a triton_cpu.tail_mask (see AnalyzeTailMasks),
+// built from the bounds instead of extracted from the n-D mask:
+//  - all leading dims are 1: the row is the whole mask, so shape_cast the
+//    converted mask (other users of the same tail mask, e.g. tl.where, then
+//    share one vector.create_mask);
+//  - otherwise: create_mask(row inside the leading bounds ? last bound : 0).
+// Returns null when the mask is not a tail_mask.
+static Value getTailRowMask(Value mask, Value convertedMask,
+                            ArrayRef<int64_t> shape,
+                            ArrayRef<int64_t> rowIndices, Location loc,
+                            ConversionPatternRewriter &rewriter) {
+  auto tailMask = mask ? mask.getDefiningOp<triton::cpu::TailMaskOp>() : nullptr;
+  if (!tailMask)
+    return nullptr;
+  auto rowMaskTy = VectorType::get(shape.back(), rewriter.getI1Type());
+  if (llvm::all_of(shape.drop_back(), [](int64_t d) { return d == 1; }))
+    return vector::ShapeCastOp::create(rewriter, loc, rowMaskTy, convertedMask);
+
+  auto bounds = tailMask.getBounds();
+  auto i32Ty = rewriter.getI32Type();
+  Value rowOn = arith::ConstantIntOp::create(rewriter, loc, rewriter.getI1Type(), 1);
+  for (auto [bound, idx] : llvm::zip(bounds.drop_back(), rowIndices)) {
+    Value idxVal = arith::ConstantIntOp::create(rewriter, loc, i32Ty, idx);
+    Value inside = arith::CmpIOp::create(
+        rewriter, loc, arith::CmpIPredicate::sgt, bound, idxVal);
+    rowOn = arith::AndIOp::create(rewriter, loc, rowOn, inside);
+  }
+  Value zero = arith::ConstantIntOp::create(rewriter, loc, i32Ty, 0);
+  Value len =
+      arith::SelectOp::create(rewriter, loc, rowOn, bounds.back(), zero);
+  Value lenIdx = arith::IndexCastOp::create(rewriter, loc,
+                                            rewriter.getIndexType(), len);
+  return vector::CreateMaskOp::create(rewriter, loc, rowMaskTy,
+                                      ValueRange{lenIdx});
+}
+
 template <typename OpT>
 struct MemoryOpConversion : public OpConversionPattern<OpT> {
   using OpConversionPattern<OpT>::OpConversionPattern;
@@ -205,7 +242,10 @@ struct LoadOpConversion : public MemoryOpConversion<triton::LoadOp> {
         Value subMask = mask;
         Value passThru = defaultVal;
         if (shape.size() > 1) {
-          subMask = vector::ExtractOp::create(rewriter, loc, mask, subIndices);
+          subMask = getTailRowMask(loadOp.getMask(), mask, shape, subIndices,
+                                   loc, rewriter);
+          if (!subMask)
+            subMask = vector::ExtractOp::create(rewriter, loc, mask, subIndices);
           passThru =
               vector::ExtractOp::create(rewriter, loc, defaultVal, subIndices);
         }
@@ -367,9 +407,10 @@ struct StoreOpConversion : public MemoryOpConversion<triton::StoreOp> {
       if (mask) {
         Value subMask = mask;
         if (shape.size() > 1) {
-          SmallVector<int64_t> subIndices = indices;
-          subIndices.pop_back();
-          subMask = vector::ExtractOp::create(rewriter, loc, mask, indices);
+          subMask = getTailRowMask(storeOp.getMask(), mask, shape, indices, loc,
+                                   rewriter);
+          if (!subMask)
+            subMask = vector::ExtractOp::create(rewriter, loc, mask, indices);
         }
         vector::MaskedStoreOp::create(rewriter, loc, memRef, zeroIdx, subMask,
                                       val);

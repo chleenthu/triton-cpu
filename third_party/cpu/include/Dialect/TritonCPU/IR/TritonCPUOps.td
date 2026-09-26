@@ -72,6 +72,30 @@ def TTC_PtrToMemRefOp : TTC_Op<"ptr_to_memref", [NoMemoryEffect]> {
   let assemblyFormat = "$src attr-dict `:` type($src) `->` type($result)";
 }
 
+def TTC_TailMaskOp : TTC_Op<"tail_mask", [Pure]> {
+  let summary = "Box-shaped (tail) mask given by per-dimension bounds.";
+
+  let description = [{
+    Element (i_0, ..., i_{n-1}) of the result is true iff i_d < bounds[d] for
+    every dimension d. Bounds are not clamped: a bound <= 0 turns the whole
+    mask off, a bound >= the dimension size keeps that dimension fully on
+    (the same semantics as vector.create_mask).
+
+    Produced by the TTIR AnalyzeTailMasks pass from the arith.cmpi /
+    arith.andi / tt.make_range / tt.splat / tt.expand_dims / tt.broadcast
+    chains Triton programs use to build masks, so later layers can read the
+    tail length directly (vector.create_mask, then an explicit vector length).
+  }];
+
+  let arguments = (ins Variadic<I32>:$bounds);
+
+  let results = (outs TT_BoolTensor:$result);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = "$bounds attr-dict `:` type($result)";
+}
+
 def GlobalMemory : Resource<"::mlir::triton::GlobalMemory">;
 
 

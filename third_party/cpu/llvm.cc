@@ -65,10 +65,12 @@ std::string getHostTargetTriple() {
 // fixed-length vectors, since LLVM cannot reliably detect the vector extension
 // at runtime.
 const char *const kRISCV64CPU = "generic-rv64";
-// +zvfbfmin only makes bf16 a legal vector memory type (plain vle16/vse16);
-// without it LLVM scalarizes every bf16 vector load/store. The compiler
-// decomposes bf16 conversions to integer ops, so no bf16 instructions are emitted.
-const char *const kRISCV64Features = "+m,+f,+d,+v,+zvfbfmin";
+// No zvfbfmin: the target board (SpacemiT X60) does not implement it, so any
+// vfwcvtbf16/vfncvtbf16 would raise SIGILL. bf16 therefore never reaches LLVM
+// as a vector type on riscv64: the compiler does bf16 memory ops on i16
+// (promote_bf16_to_fp32) and bf16<->f32 conversions with integer ops
+// (decompose_bf16_conv).
+const char *const kRISCV64Features = "+m,+f,+d,+v";
 
 std::string getHostCPUName() {
   return isNativeTarget() ? llvm::sys::getHostCPUName().str() : kRISCV64CPU;

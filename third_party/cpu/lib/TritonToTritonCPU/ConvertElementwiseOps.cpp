@@ -60,6 +60,7 @@ public:
     addIllegalOp<triton::ClampFOp>();
     addIllegalOp<triton::FpToFpOp>();
     addIllegalOp<triton::ExternElementwiseOp>();
+    addIllegalOp<triton::cpu::TailMaskOp>();
   }
 };
 
@@ -160,6 +161,27 @@ struct FpToFpOpConversion : public OpConversionPattern<triton::FpToFpOp> {
   }
 };
 
+// triton_cpu.tail_mask (from AnalyzeTailMasks) -> vector.create_mask with
+// the same per-dimension bounds, so the tail length stays a scalar operand
+// in TTCIR.
+struct TailMaskOpConversion
+    : public OpConversionPattern<triton::cpu::TailMaskOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(triton::cpu::TailMaskOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto vecTy = cast<VectorType>(getTypeConverter()->convertType(op.getType()));
+    SmallVector<Value> bounds;
+    for (Value b : adaptor.getBounds())
+      bounds.push_back(arith::IndexCastOp::create(
+          rewriter, loc, rewriter.getIndexType(), b));
+    rewriter.replaceOpWithNewOp<vector::CreateMaskOp>(op, vecTy, bounds);
+    return success();
+  }
+};
+
 struct ConvertElementwiseOps
     : public triton::impl::ConvertElementwiseOpsBase<ConvertElementwiseOps> {
   using ConvertElementwiseOpsBase::ConvertElementwiseOpsBase;
@@ -257,6 +279,7 @@ struct ConvertElementwiseOps
     patterns.add<MulhiUIOpConversion>(typeConverter, context);
     patterns.add<ClampFOpConversion>(typeConverter, context);
     patterns.add<FpToFpOpConversion>(typeConverter, context);
+    patterns.add<TailMaskOpConversion>(typeConverter, context);
 
     if (failed(applyPartialConversion(mod, convTarget, std::move(patterns))))
       return signalPassFailure();

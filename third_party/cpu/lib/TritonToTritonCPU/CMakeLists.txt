@@ -1,4 +1,5 @@
 add_triton_library(TritonToTritonCPU
+    AnalyzeTailMasks.cpp
     ConvertAtomicOps.cpp
     ConvertControlFlowOps.cpp
     ConvertDebugOps.cpp
