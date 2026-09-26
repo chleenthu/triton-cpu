@@ -129,3 +129,28 @@ module {
     tt.return %sel, %sum : vector<16xf32>, f32
   }
 }
+
+// -----
+
+// A masked reduction (from ConvertReductionOp with TRITON_VSETVL_REDUCE)
+// only reads the lanes its mask enables: the load feeding it through
+// lane-wise ops gets a poison pass-through.
+
+// CHECK-LABEL: @masked_reduction_use
+// CHECK:       %[[POISON:.+]] = ub.poison : vector<16xf32>
+// CHECK:       vector.maskedload %{{.+}}[%{{.+}}], %{{.+}}, %[[POISON]]
+// CHECK:       vector.mask
+
+module {
+  tt.func public @masked_reduction_use(%arg0: !tt.ptr<f32>, %arg1: index) -> f32 {
+    %c0 = arith.constant 0 : index
+    %zero = arith.constant 0.000000e+00 : f32
+    %pass = arith.constant dense<0.000000e+00> : vector<16xf32>
+    %m = vector.create_mask %arg1 : vector<16xi1>
+    %src = triton_cpu.ptr_to_memref %arg0 : <f32> -> memref<16xf32>
+    %v = vector.maskedload %src[%c0], %m, %pass : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>
+    %sq = arith.mulf %v, %v : vector<16xf32>
+    %s = vector.mask %m { vector.reduction <add>, %sq, %zero : vector<16xf32> into f32 } : vector<16xi1> -> f32
+    tt.return %s : f32
+  }
+}

@@ -21,6 +21,7 @@ namespace cpu {
 #define GEN_PASS_DECL
 #include "cpu/include/TritonToTritonCPU/Passes.h.inc"
 
+std::unique_ptr<OperationPass<ModuleOp>> createAnalyzeTailMasks();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertElementwiseOps();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertElemManipOps();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertMemoryOps();
@@ -32,7 +33,8 @@ std::unique_ptr<OperationPass<ModuleOp>> createConvertControlFlowOps();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertHistogramOp();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertReductionOp();
 std::unique_ptr<OperationPass<ModuleOp>>
-createConvertReductionOp(bool useReductionOp, bool useMultiDimReductionOp);
+createConvertReductionOp(bool useReductionOp, bool useMultiDimReductionOp,
+                         bool useMaskedReduction = false);
 std::unique_ptr<OperationPass<ModuleOp>> createConvertScanOp();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertAtomicOps();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertDebugOps();

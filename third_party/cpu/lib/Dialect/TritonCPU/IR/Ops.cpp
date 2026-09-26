@@ -9,6 +9,13 @@
 
 namespace mlir::triton::cpu {
 
+LogicalResult TailMaskOp::verify() {
+  if (static_cast<int64_t>(getBounds().size()) != getType().getRank())
+    return emitOpError("expects one bound per result dimension, got ")
+           << getBounds().size() << " bounds for rank " << getType().getRank();
+  return success();
+}
+
 LogicalResult PrintOp::verify() {
   if (getOperands().size() > 1)
     return emitOpError("expects at most one operand");

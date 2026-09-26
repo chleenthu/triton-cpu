@@ -54,6 +54,7 @@ struct TailLen {
   enum Kind {
     Const,   // cst
     Index,   // value (index-typed)
+    Positive, // lhs > 0 ? n : 0 (a unit leading dim of an n-D create_mask)
     AllOrNone, // cond (i1 scalar) ? n : 0
     Min,
     Max,
@@ -134,6 +135,55 @@ TailLenPtr makeLen(TailLen::Kind kind) {
   return len;
 }
 
+// Length given as a scalar (the operand of a 1-D vector.create_mask), seen
+// through the ops AnalyzeTailMasks / ConvertMemoryOps build it from, so it
+// can be compared with other lengths:
+//   constant -> Const, select(c, x, 0) -> min(c ? n : 0, x),
+//   minsi / maxsi -> Min / Max, index_cast / extsi -> the source.
+// Anything else is an opaque Index value.
+TailLenPtr analyzeScalarLength(Value v, int64_t n, int depth) {
+  auto opaque = [&] {
+    auto len = makeLen(TailLen::Index);
+    len->value = v;
+    return len;
+  };
+  if (depth > kMaxDepth)
+    return opaque();
+  IntegerAttr cstAttr;
+  if (matchPattern(v, m_Constant(&cstAttr))) {
+    auto len = makeLen(TailLen::Const);
+    len->cst = cstAttr.getValue().getSExtValue();
+    return len;
+  }
+  Operation *def = v.getDefiningOp();
+  if (!def)
+    return opaque();
+  if (isa<arith::IndexCastOp, arith::ExtSIOp>(def))
+    return analyzeScalarLength(def->getOperand(0), n, depth + 1);
+  if (isa<arith::MinSIOp, arith::MaxSIOp>(def)) {
+    auto len = makeLen(isa<arith::MinSIOp>(def) ? TailLen::Min : TailLen::Max);
+    len->lhs = analyzeScalarLength(def->getOperand(0), n, depth + 1);
+    len->rhs = analyzeScalarLength(def->getOperand(1), n, depth + 1);
+    return len;
+  }
+  if (auto sel = dyn_cast<arith::SelectOp>(def)) {
+    IntegerAttr elseAttr;
+    if (!sel.getCondition().getType().isInteger(1) ||
+        !matchPattern(sel.getFalseValue(), m_Constant(&elseAttr)) ||
+        !elseAttr.getValue().isZero())
+      return opaque();
+    // c ? x : 0 == min(c ? n : 0, x) for the clamped length semantics.
+    auto cond = makeLen(TailLen::AllOrNone);
+    cond->cond = Scalar{sel.getCondition(), 0};
+    cond->n = n;
+    auto len = makeLen(TailLen::Min);
+    len->lhs = cond;
+    len->rhs = analyzeScalarLength(sel.getTrueValue(), n, depth + 1);
+    return len;
+  }
+  return opaque();
+}
+
 // Pure analysis: no IR is created.
 TailLenPtr analyzeTailLength(Value mask, int depth) {
   if (depth > kMaxDepth)
@@ -170,10 +220,22 @@ TailLenPtr analyzeTailLength(Value mask, int depth) {
     return len;
   }
   if (auto cm = dyn_cast<vector::CreateMaskOp>(def)) {
-    if (cm.getNumOperands() != 1)
-      return nullptr;
-    auto len = makeLen(TailLen::Index);
-    len->value = cm.getOperand(0);
+    // An n-D create_mask with unit leading dims (from triton_cpu.tail_mask
+    // of a [1, ..., 1, N] tensor) is identified by the op itself, so masks
+    // that share it compare equal.
+    // n-D create_mask with unit leading dims (triton_cpu.tail_mask of a
+    // [1, ..., 1, N] tensor): lanes are on iff every leading bound is > 0
+    // and the lane is below the last bound.
+    TailLenPtr len = analyzeScalarLength(cm.getOperands().back(), *n, depth + 1);
+    for (Value bound : cm.getOperands().drop_back()) {
+      auto lead = makeLen(TailLen::Positive);
+      lead->lhs = analyzeScalarLength(bound, *n, depth + 1);
+      lead->n = *n;
+      auto both = makeLen(TailLen::Min);
+      both->lhs = lead;
+      both->rhs = len;
+      len = both;
+    }
     return len;
   }
   if (auto sc = dyn_cast<vector::ShapeCastOp>(def)) {
@@ -269,7 +331,17 @@ Value buildTailLength(OpBuilder &b, Location loc, const TailLen &len) {
   case TailLen::Const:
     return indexCst(len.cst);
   case TailLen::Index:
+    // analyzeScalarLength looks through index_cast / extsi (both
+    // sign-preserving), so the value may be an integer of another width.
+    if (!isa<IndexType>(len.value.getType()))
+      return arith::IndexCastOp::create(b, loc, b.getIndexType(), len.value);
     return len.value;
+  case TailLen::Positive: {
+    Value v = buildTailLength(b, loc, *len.lhs);
+    Value zero = indexCst(0);
+    Value on = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sgt, v, zero);
+    return arith::SelectOp::create(b, loc, on, indexCst(len.n), zero);
+  }
   case TailLen::AllOrNone:
     return arith::SelectOp::create(b, loc,
                                    buildScalar(b, loc, len.cond, b.getI1Type()),
@@ -321,6 +393,8 @@ bool sameLen(const TailLen &a, const TailLen &b) {
     return a.cst == b.cst;
   case TailLen::Index:
     return a.value == b.value;
+  case TailLen::Positive:
+    return a.n == b.n && sameLen(*a.lhs, *b.lhs);
   case TailLen::AllOrNone:
     return a.n == b.n && sameScalar(a.cond, b.cond);
   case TailLen::Min:
@@ -343,7 +417,8 @@ bool provablyLE(const TailLen &a, const TailLen &b) {
     return true;
   if (a.kind == TailLen::Const && b.kind == TailLen::Const)
     return a.cst <= b.cst;
-  if (a.kind == TailLen::AllOrNone && b.kind == TailLen::Const)
+  if ((a.kind == TailLen::AllOrNone || a.kind == TailLen::Positive) &&
+      b.kind == TailLen::Const)
     return a.n <= b.cst;
   // min(x, y) <= b if either x <= b or y <= b.
   if (a.kind == TailLen::Min &&
@@ -383,8 +458,8 @@ bool isLaneWise(Operation *op, int64_t n) {
 
 // Whether no lane >= `len` of `v` can affect the program: every path through
 // lane-wise ops ends in an arith.select that picks `v` only where its
-// condition (size <= len) is on, or in a vector.maskedstore of `v` whose
-// mask has size <= len.
+// condition (size <= len) is on, in a vector.maskedstore of `v` whose mask
+// has size <= len, or in a masked vector.reduction whose mask has size <= len.
 bool tailLanesUnused(Value v, const TailLen &len, int64_t n,
                      llvm::SmallPtrSetImpl<Value> &visited, int depth = 0) {
   if (depth > 64)
@@ -396,6 +471,16 @@ bool tailLanesUnused(Value v, const TailLen &len, int64_t n,
     if (auto store = dyn_cast<vector::MaskedStoreOp>(user)) {
       if (use.get() == store.getValueToStore() &&
           use.getOperandNumber() != 0 && maskWithin(store.getMask(), len))
+        continue;
+      return false;
+    }
+    // A masked reduction (vector.mask %m { vector.reduction %v }, from
+    // ConvertReductionOp with TRITON_VSETVL_REDUCE) only reads lanes of %v
+    // that %m enables.
+    if (auto red = dyn_cast<vector::ReductionOp>(user)) {
+      auto maskOp = dyn_cast<vector::MaskOp>(red->getParentOp());
+      if (maskOp && use.get() == red.getVector() &&
+          maskWithin(maskOp.getMask(), len))
         continue;
       return false;
     }

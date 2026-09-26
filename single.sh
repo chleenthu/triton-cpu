@@ -24,7 +24,7 @@ export TRITON_ALWAYS_COMPILE=1
 export TRITON_KERNEL_DUMP=1
 export TRITON_DUMP_DIR=dump
 export TRITON_CPU_BACKEND=1
-export TRITON_VSETVL_MINE=1
+#export TRITON_VSETVL_MINE=1
 
 KERNEL=${1:-triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_25}
 shift
