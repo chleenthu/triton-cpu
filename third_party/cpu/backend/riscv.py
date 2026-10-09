@@ -291,6 +291,11 @@ def build_standalone_executable(kernel_name: str, so_bytes: bytes, runner_source
     extra_args = ["-fopenmp"]
     if toolchain.sysroot and os.path.isfile(os.path.join(toolchain.sysroot, "usr", "lib", "libomp.a")):
         extra_args += ["-Wl,-Bstatic", "-lomp", "-Wl,-Bdynamic"]
+    # The runner's __bf16 buffers convert float<->bf16 in software (__truncsfbf2
+    # et al), which this toolchain's libgcc.a lacks; link them from the riscv64
+    # compiler-rt build placed alongside libgcc.a (see build.py, which does the
+    # same for the kernel .so).
+    extra_args.append("-lclang_rt.builtins-riscv64")
     extra_args.append("-Wl,-rpath,$ORIGIN")
     cmd = toolchain.compile_command(
         [runner_path.name, so_path.name],

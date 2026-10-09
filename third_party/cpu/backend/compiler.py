@@ -196,6 +196,11 @@ class CPUBackend(BaseBackend):
         cpu.passes.ttcpuir.add_scalarize(pm, True)
         cpu.passes.ttcpuir.add_convert_memory_ops(pm, True, opt.assume_in_bounds)
         cpu.passes.ttcpuir.add_convert_ptr_ops(pm)
+        # tl.flip's xor-reduction chain -> one vector.shuffle (must run before the xori / tt.reduce
+        # conversions). Off by default (the original lowering); TRITON_CPU_FLIP_TO_SHUFFLE=1
+        # enables it.
+        if os.getenv("TRITON_CPU_FLIP_TO_SHUFFLE") == "1":
+            cpu.passes.ttcpuir.add_convert_flip_to_shuffle(pm)
         cpu.passes.ttcpuir.add_convert_elementwise_ops(pm)
         cpu.passes.ttcpuir.add_convert_elem_manip_ops(pm)
         cpu.passes.ttcpuir.add_convert_dot_op(pm)

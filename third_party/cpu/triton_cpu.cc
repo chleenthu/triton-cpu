@@ -107,6 +107,9 @@ void init_triton_cpu_passes_ttcpuir(py::module_ &m) {
   m.def("add_convert_ptr_ops", [](mlir::PassManager &pm) {
     pm.addPass(mlir::triton::cpu::createConvertPtrOps());
   });
+  m.def("add_convert_flip_to_shuffle", [](mlir::PassManager &pm) {
+    pm.addPass(mlir::triton::cpu::createConvertFlipToShuffle());
+  });
   m.def("add_convert_elementwise_ops", [](mlir::PassManager &pm) {
     pm.addPass(mlir::triton::cpu::createConvertElementwiseOps());
   });

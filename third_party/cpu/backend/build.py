@@ -64,6 +64,14 @@ def _build_cpu_shared_object(name, src, srcdir, libraries, ccflags, source_kind)
     apple_clang = _is_apple_clang(compiler)
 
     libraries.append("gcc")
+    if not _native_target():
+        # This toolchain's libgcc.a has no software float<->bf16 conversion routines
+        # (__truncsfbf2 et al) and no RVV bf16 hardware extension is targeted either;
+        # link the real ones from a standalone riscv64 compiler-rt build (see
+        # ~/llvm-project_v/build-compiler-rt-riscv64, built the same way as
+        # ~/llvm-project_v/build-openmp-riscv64), placed alongside libgcc.a so it's
+        # already on this toolchain's default library search path.
+        libraries.append("clang_rt.builtins-riscv64")
     cpu_flags = []
 
     if system == "Darwin":

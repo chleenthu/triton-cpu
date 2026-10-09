@@ -24,6 +24,7 @@ namespace cpu {
 std::unique_ptr<OperationPass<ModuleOp>> createAnalyzeTailMasks();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertElementwiseOps();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertElemManipOps();
+std::unique_ptr<OperationPass<ModuleOp>> createConvertFlipToShuffle();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertMemoryOps();
 std::unique_ptr<OperationPass<ModuleOp>>
 createConvertMemoryOps(bool useGatherScatter, bool assumeInBounds);

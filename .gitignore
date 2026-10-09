@@ -106,3 +106,4 @@ artifacts/
 torch_compile_debug/
 dump_sta/
 dump/
+dump*/
