@@ -50,6 +50,53 @@ class Toolchain:
         return cmd
 
 
+# FP8 buffers: Triton type -> (torch dtype name, (exponent bits, mantissa bits,
+# exponent bias, fnuz)). C has no FP8 type, so the runner stores FP8 buffers as
+# uint8_t bytes encoded on the host with torch, and decodes them for the check.
+# "fnuz" formats have no infinity or negative zero, and 0x80 is their NaN.
+_FP8_FORMATS = {
+    "fp8e4nv": ("float8_e4m3fn", (4, 3, 7, 0)),
+    "fp8e5": ("float8_e5m2", (5, 2, 15, 0)),
+    "fp8e4b8": ("float8_e4m3fnuz", (4, 3, 8, 1)),
+    "fp8e5b16": ("float8_e5m2fnuz", (5, 2, 16, 1)),
+}
+
+_FP8_DECODE_C = r"""
+static double triton_pow2(int k) {
+  union { uint64_t u; double d; } x;
+  x.u = (uint64_t)(k + 1023) << 52;
+  return x.d;
+}
+
+static double triton_fp8_to_double(uint8_t v, int ebits, int mbits, int bias, int fnuz) {
+  if (fnuz && v == 0x80)
+    return NAN;
+  int sign = v >> 7;
+  int e = (v >> mbits) & ((1 << ebits) - 1);
+  int m = v & ((1 << mbits) - 1);
+  double r;
+  if (!fnuz && ebits == 5 && e == 31)
+    r = m ? NAN : INFINITY;
+  else if (!fnuz && ebits == 4 && e == 15 && m == 7)
+    r = NAN;
+  else if (e == 0)
+    r = m * triton_pow2(1 - bias - mbits);
+  else
+    r = ((1 << mbits) + m) * triton_pow2(e - bias - mbits);
+  return sign ? -r : r;
+}
+"""
+
+
+def _fp8_encode(values, elem_ty: str) -> tuple[list[int], list[float]]:
+    """The FP8 bytes of `values` and the values they decode to (rounded to FP8)."""
+    import torch
+
+    torch_dtype = getattr(torch, _FP8_FORMATS[elem_ty][0])
+    t = torch.tensor([float(v) for v in values], dtype=torch.float32).to(torch_dtype)
+    return t.view(torch.uint8).tolist(), t.double().tolist()
+
+
 def _infer_triton_type(value) -> str:
     is_buffer = not isinstance(value, (str, bytes)) and hasattr(value, "__iter__")
     dtype_name = str(getattr(value, "dtype", "")).removeprefix("torch.")
@@ -57,6 +104,7 @@ def _infer_triton_type(value) -> str:
         "bool": "i1", "int8": "i8", "int16": "i16", "int32": "i32", "int64": "i64",
         "uint8": "u8", "uint16": "u16", "uint32": "u32", "uint64": "u64",
         "float16": "fp16", "bfloat16": "bf16", "float32": "fp32", "float64": "fp64",
+        **{torch_name: ty for ty, (torch_name, _) in _FP8_FORMATS.items()},
     }
     scalar_type = dtype_map.get(dtype_name)
 
@@ -147,13 +195,49 @@ def generate_runner(kernel_name: str, signature: dict, arguments: dict, grid: Se
     extern_types: list[str] = []
     call_args: list[str] = []
     checks: list[str] = []
+    uses_fp8 = False
     for index, (name, ty) in enumerate(signature.items()):
         if ty == "constexpr":
             continue
         if name not in arguments:
             raise ValueError(f"Missing standalone argument: {name}")
+        if ty in _FP8_FORMATS:
+            raise ValueError(f"FP8 scalar argument {name} is not supported; pass an FP8 buffer instead")
 
-        if ty[0] == "*":
+        if ty[0] == "*" and ty[1:] in _FP8_FORMATS:
+            # FP8 buffer: callers pass ordinary float values; store the FP8 bytes, and
+            # check outputs against the expected values rounded to the same format.
+            uses_fp8 = True
+            values = list(arguments[name])
+            elem_ty = ty[1:]
+            ebits, mbits, bias, fnuz = _FP8_FORMATS[elem_ty][1]
+            storage_size = max(1, len(values))
+            codes, _ = _fp8_encode(values, elem_ty)
+            initializer = ", ".join(str(c) for c in codes) or "0"
+            declarations.append(f"  uint8_t arg_{index}[{storage_size}] = {{{initializer}}};")
+            extern_types.append("void*")
+            call_args.append(f"arg_{index}")
+
+            if name in expected:
+                expected_values = list(expected[name])
+                if len(expected_values) != len(values):
+                    raise ValueError(f"Expected length for {name} does not match its buffer")
+                _, rounded = _fp8_encode(expected_values, elem_ty)
+                expected_init = ", ".join(_c_literal(v, "double") for v in rounded) or "0"
+                declarations.append(f"  const double expected_{index}[{storage_size}] = {{{expected_init}}};")
+                got = f"triton_fp8_to_double(arg_{index}[i], {ebits}, {mbits}, {bias}, {fnuz})"
+                checks.extend([
+                    f"  for (int i = 0; i < {len(values)}; ++i) {{",
+                    f"    double got = {got}, want = expected_{index}[i];",
+                    f"    double diff = got - want; if (diff < 0) diff = -diff;",
+                    f"    if (isnan(got) != isnan(want) || (!isnan(want) && diff > {atol:.17g})) {{",
+                    f'      fprintf(stderr, "verification failed: {name}[%d] got=%.9g expected=%.9g\\n", '
+                    f"i, got, want);",
+                    "      return 1;",
+                    "    }",
+                    "  }",
+                ])
+        elif ty[0] == "*":
             values = list(arguments[name])
             elem_ty = ty[1:]
             # ty_to_cpp maps bf16/fp16 to "float" (4 bytes) for scalar/ABI purposes, but
@@ -228,6 +312,7 @@ def generate_runner(kernel_name: str, signature: dict, arguments: dict, grid: Se
         "#ifdef _OPENMP",
         "#include <omp.h>",
         "#endif",
+        *([_FP8_DECODE_C] if uses_fp8 else []),
         "",
         f"extern void {kernel_name}({', '.join(extern_types)});",
         "",
