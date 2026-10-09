@@ -201,6 +201,52 @@ static Value getRank1ElementPtr(ConversionPatternRewriter &rewriter,
 // EVL = number of active lanes); lanes >= EVL take the pass-through value via
 // llvm.vp.merge (vp.load leaves them poison), unless the pass-through is
 // ub.poison (TailMaskToEVL proved those lanes unused).
+// llvm.vp.load of the first EVL elements straight into the vector (all-true
+// mask), merged with the pass-through unless every lane is loaded or the
+// pass-through is poison.
+static Value emitVPLoad(ConversionPatternRewriter &rewriter,
+                        vector::MaskedLoadOp op,
+                        vector::MaskedLoadOp::Adaptor adaptor, Type elemTy,
+                        const MaskEVL &evl) {
+  auto loc = op.getLoc();
+  VectorType vecTy = op.getVectorType();
+  Value loadPtr = getRank1ElementPtr(rewriter, loc, adaptor.getBase(),
+                                     adaptor.getIndices(), elemTy);
+  Value allTrueMask = getAllTrueMask(rewriter, loc, vecTy);
+  Value evlVal = getEVLValue(rewriter, loc, evl);
+  Value vpLoad =
+      LLVM::CallIntrinsicOp::create(
+          rewriter, loc, vecTy,
+          rewriter.getStringAttr(getVPIntrinsicName("load", vecTy)),
+          ValueRange({loadPtr, allTrueMask, evlVal}))
+          .getResult(0);
+  if (evl.constant == vecTy.getNumElements() ||
+      op.getPassThru().getDefiningOp<ub::PoisonOp>())
+    return vpLoad;
+  return LLVM::CallIntrinsicOp::create(
+             rewriter, loc, vecTy,
+             rewriter.getStringAttr(
+                 getVPIntrinsicName("merge", vecTy, /*hasPtr=*/false)),
+             ValueRange({allTrueMask, vpLoad, adaptor.getPassThru(), evlVal}))
+      .getResult(0);
+}
+
+// llvm.vp.store of the first EVL elements of the value (all-true mask).
+static void emitVPStore(ConversionPatternRewriter &rewriter,
+                        vector::MaskedStoreOp op,
+                        vector::MaskedStoreOp::Adaptor adaptor, Type elemTy,
+                        const MaskEVL &evl) {
+  auto loc = op.getLoc();
+  VectorType vecTy = op.getVectorType();
+  Value storePtr = getRank1ElementPtr(rewriter, loc, adaptor.getBase(),
+                                      adaptor.getIndices(), elemTy);
+  Value allTrueMask = getAllTrueMask(rewriter, loc, vecTy);
+  Value evlVal = getEVLValue(rewriter, loc, evl);
+  LLVM::CallIntrinsicOp::create(
+      rewriter, loc, rewriter.getStringAttr(getVPIntrinsicName("store", vecTy)),
+      ValueRange({adaptor.getValueToStore(), storePtr, allTrueMask, evlVal}));
+}
+
 struct VectorMaskedLoadOpConversion : public OpConversionPattern<vector::MaskedLoadOp> {
   using OpConversionPattern::OpConversionPattern;
 
@@ -224,29 +270,7 @@ struct VectorMaskedLoadOpConversion : public OpConversionPattern<vector::MaskedL
     }
 
     Type elemTy = getTypeConverter()->convertType(vecTy.getElementType());
-    Value loadPtr = getRank1ElementPtr(rewriter, loc, adaptor.getBase(),
-                                       adaptor.getIndices(), elemTy);
-    Value allTrueMask = getAllTrueMask(rewriter, loc, vecTy);
-    Value evlVal = getEVLValue(rewriter, loc, *evl);
-    Value vpLoad =
-        LLVM::CallIntrinsicOp::create(
-            rewriter, loc, vecTy,
-            rewriter.getStringAttr(getVPIntrinsicName("load", vecTy)),
-            ValueRange({loadPtr, allTrueMask, evlVal}))
-            .getResult(0);
-
-    if (evl->constant == n || op.getPassThru().getDefiningOp<ub::PoisonOp>()) {
-      rewriter.replaceOp(op, vpLoad);
-      return success();
-    }
-    Value merged =
-        LLVM::CallIntrinsicOp::create(
-            rewriter, loc, vecTy,
-            rewriter.getStringAttr(
-                getVPIntrinsicName("merge", vecTy, /*hasPtr=*/false)),
-            ValueRange({allTrueMask, vpLoad, passThru, evlVal}))
-            .getResult(0);
-    rewriter.replaceOp(op, merged);
+    rewriter.replaceOp(op, emitVPLoad(rewriter, op, adaptor, elemTy, *evl));
     return success();
   }
 };
@@ -276,13 +300,7 @@ struct VectorMaskedStoreOpConversion : public OpConversionPattern<vector::Masked
     }
 
     Type elemTy = getTypeConverter()->convertType(vecTy.getElementType());
-    Value storePtr = getRank1ElementPtr(rewriter, loc, adaptor.getBase(),
-                                        adaptor.getIndices(), elemTy);
-    Value allTrueMask = getAllTrueMask(rewriter, loc, vecTy);
-    Value evlVal = getEVLValue(rewriter, loc, *evl);
-    LLVM::CallIntrinsicOp::create(
-        rewriter, loc, rewriter.getStringAttr(getVPIntrinsicName("store", vecTy)),
-        ValueRange({adaptor.getValueToStore(), storePtr, allTrueMask, evlVal}));
+    emitVPStore(rewriter, op, adaptor, elemTy, *evl);
     rewriter.eraseOp(op);
     return success();
   }
@@ -390,6 +408,18 @@ static Value createEntryAlloca(ConversionPatternRewriter &rewriter,
       one, /*alignment=*/16);
 }
 
+// The minimum VLEN the backend compiles for (-riscv-v-vector-bits-min=256 in
+// third_party/cpu/llvm.cc), so an m8 register group holds at least 8 * 256
+// bits.
+static constexpr int64_t kMinM8Bits = 8 * 256;
+
+// Whether the whole vector fits one m8 register group. Then a single
+// vsetvli(EVL) + vp.load / vp.store moves it, with no stack slot and no loop.
+static bool fitsOneM8Group(VectorType vecTy) {
+  return vecTy.getNumElements() * vecTy.getElementTypeBitWidth() <=
+         kMinM8Bits;
+}
+
 static std::optional<unsigned> getCopyBitWidth(VectorType vecTy) {
   unsigned bits = vecTy.getElementTypeBitWidth();
   if (bits != 8 && bits != 16 && bits != 32 && bits != 64)
@@ -397,8 +427,10 @@ static std::optional<unsigned> getCopyBitWidth(VectorType vecTy) {
   return bits;
 }
 
-// TRITON_VSETVL_MINE: vector.maskedload with a tail mask -> the vector's
-// stack slot is filled with the pass-through (skipped for ub.poison), the
+// TRITON_VSETVL_MINE: vector.maskedload with a tail mask. A vector that fits
+// one m8 register group is loaded straight into registers with vsetvli(EVL) +
+// vp.load, as TRITON_VSETVL_LANE does. A larger one goes through its stack
+// slot: the slot is filled with the pass-through (skipped for ub.poison), the
 // first EVL elements are copied into it by a vsetvli loop, then the whole
 // vector is loaded from it.
 struct VsetvlMaskedLoadOpConversion : public OpConversionPattern<vector::MaskedLoadOp> {
@@ -428,6 +460,10 @@ struct VsetvlMaskedLoadOpConversion : public OpConversionPattern<vector::MaskedL
 
     Type resTy = getTypeConverter()->convertType(vecTy);
     Type elemTy = getTypeConverter()->convertType(vecTy.getElementType());
+    if (fitsOneM8Group(vecTy)) {
+      rewriter.replaceOp(op, emitVPLoad(rewriter, op, adaptor, elemTy, *evl));
+      return success();
+    }
     Value src = getRank1ElementPtr(rewriter, loc, adaptor.getBase(),
                                    adaptor.getIndices(), elemTy);
     Value slot = createEntryAlloca(rewriter, op, resTy);
@@ -443,9 +479,10 @@ struct VsetvlMaskedLoadOpConversion : public OpConversionPattern<vector::MaskedL
   }
 };
 
-// TRITON_VSETVL_MINE: vector.maskedstore with a tail mask -> the value is
-// stored to a stack slot and its first EVL elements are copied to memory by a
-// vsetvli loop.
+// TRITON_VSETVL_MINE: vector.maskedstore with a tail mask. A vector that
+// fits one m8 register group is stored with vsetvli(EVL) + vp.store; a larger
+// one is stored to a stack slot and its first EVL elements are copied to
+// memory by a vsetvli loop.
 struct VsetvlMaskedStoreOpConversion : public OpConversionPattern<vector::MaskedStoreOp> {
   using OpConversionPattern::OpConversionPattern;
 
@@ -472,6 +509,11 @@ struct VsetvlMaskedStoreOpConversion : public OpConversionPattern<vector::Masked
 
     Type valTy = getTypeConverter()->convertType(vecTy);
     Type elemTy = getTypeConverter()->convertType(vecTy.getElementType());
+    if (fitsOneM8Group(vecTy)) {
+      emitVPStore(rewriter, op, adaptor, elemTy, *evl);
+      rewriter.eraseOp(op);
+      return success();
+    }
     Value dst = getRank1ElementPtr(rewriter, loc, adaptor.getBase(),
                                    adaptor.getIndices(), elemTy);
     Value slot = createEntryAlloca(rewriter, op, valTy);

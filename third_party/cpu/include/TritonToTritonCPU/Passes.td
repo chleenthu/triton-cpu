@@ -46,6 +46,23 @@ def AnalyzeTailMasks : Pass<"triton-cpu-analyze-tail-masks", "mlir::ModuleOp"> {
                              "mlir::triton::cpu::TritonCPUDialect"];
 }
 
+def ConvertFlipToShuffle : Pass<"triton-cpu-convert-flip-to-shuffle", "mlir::ModuleOp"> {
+    let summary = "Turn the tl.flip xor-reduction chain into a vector.shuffle.";
+    let description = [{
+        tl.flip reshapes the flipped dim to (2, ..., 2) and swaps the halves
+        of every size-2 axis with y ^ broadcast(expand_dims(xor_reduce(y))).
+        Match those steps, compose them into one constant permutation and
+        emit it as vector.shuffle, so LLVM sees a shuffle (e.g. a lane
+        reverse lowers to vid / vrsub / vrgather.vv on RVV) instead of
+        extract / xori / broadcast chains.
+    }];
+    let constructor = "mlir::triton::cpu::createConvertFlipToShuffle()";
+
+    let dependentDialects = ["mlir::arith::ArithDialect",
+                             "mlir::vector::VectorDialect",
+                             "mlir::triton::TritonDialect"];
+}
+
 def ConvertElementwiseOps : Pass<"triton-cpu-convert-elementwise-ops", "mlir::ModuleOp"> {
     let summary = "Convert elementwise ops.";
     let description = [{

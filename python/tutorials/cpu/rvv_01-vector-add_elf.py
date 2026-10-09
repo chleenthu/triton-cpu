@@ -24,7 +24,7 @@ import triton
 import triton.language as tl
 
 GPU_BLOCK_SIZE = 1024
-CPU_BLOCK_SIZE = 128
+CPU_BLOCK_SIZE = 256
 # Single Thread Threshold
 CPU_ST_THRESHOLD = 65536
 USE_GPU = False

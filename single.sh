@@ -6,7 +6,7 @@
 # Usage: ./single.sh [KERNEL_NAME[@K]] [--only-phase decode] [--iters N] [--warmup N] ...
 #   K = which launch of that kernel in the pass (0-based, default 0).
 #   SKIP_COMPILE=1 ./single.sh ...   don't recompile even the target kernel.
-# Weights are assumed already on the board (from ./gen.sh); drop --skip-weights otherwise.
+# Only the .bin files this launch needs that are missing on the board are copied (--sync-weights).
 source .venv/bin/activate
 export CC=$HOME/llvm-project/install/bin/clang
 
@@ -43,4 +43,4 @@ if [ "${SKIP_COMPILE:-0}" != 1 ]; then
   # before it keep the .so's from the last full compile (./gen.sh).
   python scripts/compile_qwen_kernels_riscv.py --phase "$PHASE" "${KERNEL%@*}"
 fi
-python scripts/gen_qwen_driver.py --host chlee@140.114.78.64 --skip-weights --only "$KERNEL" "$@"
+python scripts/gen_qwen_driver.py --host chlee@140.114.78.64 --sync-weights --only "$KERNEL" "$@"

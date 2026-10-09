@@ -36,12 +36,16 @@ export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
 
 export TRITON_ALWAYS_COMPILE=1
 export TRITON_KERNEL_DUMP=1
-#export TRITON_DUMP_DIR=dump
+export TRITON_DUMP_DIR=artifacts/dump/non_shuff
 export TRITON_CPU_BACKEND=1
+#export TRITON_CPU_FLIP_TO_SHUFFLE=1
 #export TRITON_VSETVL_MINE=1
-#export TRITON_BRANCH_TAIL=1
-python python/tutorials/cpu/rvv_reverse_v4_elf.py
-#python python/tutorials/cpu/rvv_reverse_v3_elf.py
+#python python/tutorials/cpu/rvv_03-matrix-multiplication_elf.py
+python python/tutorials/cpu/rvv_flip_elf.py
+
+export TRITON_DUMP_DIR=artifacts/dump/shuff
+export TRITON_CPU_FLIP_TO_SHUFFLE=1
+python python/tutorials/cpu/rvv_flip_elf.py
 #python python/tutorials/cpu/rvv_reverse_v2_elf.py
 #python python/tutorials/cpu/rvv_reverse_elf.py
 #python python/tutorials/cpu/rvv_01-vector-add_elf.py
