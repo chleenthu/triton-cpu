@@ -74,6 +74,9 @@ def main():
     parser.add_argument("--compile-only", action="store_true")
     parser.add_argument("--skip-weights", action="store_true",
                          help="do not copy the weight .bin files (already present in --remote-dir on the board)")
+    parser.add_argument("--sync-weights", action="store_true",
+                         help="copy only the .bin files this driver needs that are missing on the board "
+                              "(or differ in size from the local copy)")
     parser.add_argument("--skip-gemm", action="store_true",
                          help="do not launch the triton_tem_* GEMM kernels (timing of the elementwise/reduction "
                               "kernels only; the model output is then meaningless)")
@@ -500,7 +503,11 @@ def main():
         raise SystemExit("No --host given (and TRITON_RISCV_HOST unset); pass --compile-only to skip deploy+run")
 
     bin_paths = [os.path.join(weights_dir, buffer_seed_files[addr]) for addr in addr_to_idx if addr in used_addrs]
-    local_files = [driver_exe, *so_paths, *([] if args.skip_weights else bin_paths)]
+    if args.skip_weights:
+        bin_paths = []
+    elif args.sync_weights:
+        bin_paths = missing_remote_files(bin_paths, args.host, args.remote_dir)
+    local_files = [driver_exe, *so_paths, *bin_paths]
     print(f"\ndeploying {len(local_files)} files to {args.host}:{args.remote_dir} ...")
     result = deploy_and_run(local_files, args.host, os.path.basename(driver_exe), remote_dir=args.remote_dir,
                              timeout=args.timeout)
@@ -508,6 +515,20 @@ def main():
     print(result.stderr, end="")
     if result.returncode != 0 or "PASS" not in result.stdout:
         raise SystemExit(f"driver run failed (exit code {result.returncode})")
+
+
+def missing_remote_files(paths, host, remote_dir):
+    """The subset of local `paths` absent from remote_dir on host, or present with a different size
+    (e.g. left truncated by an interrupted copy)."""
+    listing = subprocess.run(
+        ["ssh", host, f"mkdir -p {remote_dir} && cd {remote_dir} && find . -maxdepth 1 -name '*.bin' -printf '%f %s\\n'"],
+        check=True, capture_output=True, text=True, timeout=60).stdout
+    remote_sizes = dict(line.rsplit(" ", 1) for line in listing.splitlines() if line)
+    missing = [p for p in paths if remote_sizes.get(os.path.basename(p)) != str(os.path.getsize(p))]
+    size_mb = sum(os.path.getsize(p) for p in missing) / 2**20
+    print(f"weights: {len(paths) - len(missing)}/{len(paths)} needed .bin files already on the board; "
+          f"copying {len(missing)} ({size_mb:.1f} MiB)")
+    return missing
 
 
 if __name__ == "__main__":

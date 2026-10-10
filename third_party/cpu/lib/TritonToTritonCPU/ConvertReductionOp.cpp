@@ -27,6 +27,15 @@ using namespace mlir::triton::cpu;
 
 namespace {
 
+// BF16 / F16 have no vector arithmetic on RVV without Zvfbfa / Zvfh, so LLVM
+// scalarizes a vector reduction of them into a sequential chain of fadd.s,
+// each rounded to nearest even (__truncsfbf2). The shuffle butterfly instead
+// computes each step in FP32 vectors and keeps the backend's own rounding.
+static bool isNarrowFloat(Type elemTy) {
+  auto floatTy = dyn_cast<FloatType>(elemTy);
+  return floatTy && floatTy.getWidth() < 32;
+}
+
 class ReductionConversionTarget : public ConversionTarget {
 public:
   explicit ReductionConversionTarget(MLIRContext &ctx, TypeConverter &converter)
@@ -145,7 +154,14 @@ struct ReduceOpConversion
       rewriter.replaceOpWithNewOp<vector::ReductionOp>(op, resTy, reductionKind,
                                                        src, acc);
       return success();
-    } else if (useMultiDimReductionOp) {
+    } else if (useMultiDimReductionOp &&
+               !isNarrowFloat(srcTy.getElementType()) &&
+               axis == srcTy.getRank() - 1) {
+      // Only the innermost axis: LowerMultiReduction uses InnerReduction,
+      // which transposes the reduced axis to the inside with shuffles first
+      // (for tl.sum(x[32, 128], axis=0), ~15K shufflevectors and 256 vector
+      // reductions). Outer axes fall back to lowerLeadingDimension, an
+      // element-wise combine of the rows.
       rewriter.replaceOpWithNewOp<vector::MultiDimReductionOp>(
           op, resTy, reductionKind, src, acc, axis);
       return success();
@@ -220,6 +236,8 @@ struct ReduceOpConversion
         !sel.getCondition().getDefiningOp<vector::CreateMaskOp>())
       return failure();
     auto elemTy = srcTy.getElementType();
+    if (isNarrowFloat(elemTy))
+      return failure();
     TypedAttr identity = getIdentity(kind, elemTy, rewriter);
     DenseElementsAttr falseAttr;
     if (!identity || !matchPattern(sel.getFalseValue(), m_Constant(&falseAttr)) ||

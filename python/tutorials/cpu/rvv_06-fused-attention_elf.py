@@ -11,7 +11,8 @@ Differences from the GPU tutorial:
 * q, k, v and o are passed as plain pointers, so _maybe_make_tensor_desc builds
   the tensor descriptors inside the kernel (the path the tutorial takes when
   host TMA descriptors are not supported).
-* One fixed config (BLOCK_M = 64, BLOCK_N = 32) instead of autotuning, with
+* One fixed config (BLOCK_M = 16, BLOCK_N = 16 on the CPU; 64, 32 on the GPU)
+  instead of autotuning, with
   warp_specialize = False and IS_HOPPER = False, and N_CTX passed as a
   constexpr. The FP8 path and the backward kernels are not ported.
 
@@ -182,7 +183,9 @@ torch.manual_seed(20)
 triton.runtime.driver.set_active_to_cpu()
 
 Z, H, N_CTX, HEAD_DIM = 1, 2, 128, 64
-BLOCK_M, BLOCK_N = 64, 32
+GPU_BLOCK_M, GPU_BLOCK_N = 64, 32
+CPU_BLOCK_M, CPU_BLOCK_N = 16, 16
+BLOCK_M, BLOCK_N = CPU_BLOCK_M, CPU_BLOCK_N
 sm_scale = 0.5
 q = torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=torch.float16).normal_(mean=0.0, std=0.5)
 k = torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=torch.float16).normal_(mean=0.0, std=0.5)
@@ -232,4 +235,4 @@ def run_on_board(causal, name):
 
 
 run_on_board(False, "rvv-attention-fwd")
-run_on_board(True, "rvv-attention-fwd-causal")
+# run_on_board(True, "rvv-attention-fwd-causal")

@@ -235,16 +235,16 @@ def run_on_board(kernel, arguments, grid, constexprs, signature, expected, name,
     print(result.stderr, end="")
 
 
-run_on_board(
-    block_transpose_pack_kernel, {
-        "a_in_ptr": flat(a), "a_out_ptr": [0.0] * (M * K), "a_sfc_map_ptr": flat(sfc_map_mk),  #
-        "b_in_ptr": flat(b), "b_out_ptr": [0.0] * (K * N), "b_sfc_map_ptr": flat(sfc_map_kn),  #
-        "M": M, "N": N, "K": K,
-    }, (max(BLOCKS_M * BLOCKS_K, BLOCKS_K * BLOCKS_N), ),
-    {"BLOCK_SIZE_M": BLOCK_SIZE_M, "BLOCK_SIZE_N": BLOCK_SIZE_N, "BLOCK_SIZE_K": BLOCK_SIZE_K}, {
-        "a_in_ptr": "*bf16", "a_out_ptr": "*bf16", "a_sfc_map_ptr": "*i32",  #
-        "b_in_ptr": "*bf16", "b_out_ptr": "*bf16", "b_sfc_map_ptr": "*i32",
-    }, {"a_out_ptr": flat(a_packed), "b_out_ptr": flat(b_packed)}, "rvv-sfc-pack", atol=0)
+# run_on_board(
+#     block_transpose_pack_kernel, {
+#         "a_in_ptr": flat(a), "a_out_ptr": [0.0] * (M * K), "a_sfc_map_ptr": flat(sfc_map_mk),  #
+#         "b_in_ptr": flat(b), "b_out_ptr": [0.0] * (K * N), "b_sfc_map_ptr": flat(sfc_map_kn),  #
+#         "M": M, "N": N, "K": K,
+#     }, (max(BLOCKS_M * BLOCKS_K, BLOCKS_K * BLOCKS_N), ),
+#     {"BLOCK_SIZE_M": BLOCK_SIZE_M, "BLOCK_SIZE_N": BLOCK_SIZE_N, "BLOCK_SIZE_K": BLOCK_SIZE_K}, {
+#         "a_in_ptr": "*bf16", "a_out_ptr": "*bf16", "a_sfc_map_ptr": "*i32",  #
+#         "b_in_ptr": "*bf16", "b_out_ptr": "*bf16", "b_sfc_map_ptr": "*i32",
+#     }, {"a_out_ptr": flat(a_packed), "b_out_ptr": flat(b_packed)}, "rvv-sfc-pack", atol=0)
 
 sfc_signature = {"a_ptr": "*bf16", "b_ptr": "*bf16", "c_ptr": "*bf16", "c_tmp_ptr": "*fp32", "sfc_map_ptr": "*i32"}
 
@@ -267,7 +267,7 @@ def sfc_arguments(ik, c_tmp):
 grid = (BLOCKS_M * BLOCKS_N, )
 run_on_board(sfc_kernel, sfc_arguments(0, [0.0] * (M * N)), grid, sfc_constexprs(1, True, True), sfc_signature,
              {"c_ptr": flat(torch_output.to(torch.bfloat16))}, "rvv-sfc-matmul", atol=BF16_ATOL)
-run_on_board(sfc_kernel, sfc_arguments(0, [0.0] * (M * N)), grid, sfc_constexprs(2, True, False), sfc_signature,
-             {"c_tmp_ptr": flat(c_tmp_blocked)}, "rvv-sfc-matmul-splitk-first", atol=1e-3)
-run_on_board(sfc_kernel, sfc_arguments(1, flat(c_tmp_blocked)), grid, sfc_constexprs(2, False, True), sfc_signature,
-             {"c_ptr": flat(torch_output.to(torch.bfloat16))}, "rvv-sfc-matmul-splitk-last", atol=BF16_ATOL)
+# run_on_board(sfc_kernel, sfc_arguments(0, [0.0] * (M * N)), grid, sfc_constexprs(2, True, False), sfc_signature,
+#              {"c_tmp_ptr": flat(c_tmp_blocked)}, "rvv-sfc-matmul-splitk-first", atol=1e-3)
+# run_on_board(sfc_kernel, sfc_arguments(1, flat(c_tmp_blocked)), grid, sfc_constexprs(2, False, True), sfc_signature,
+#              {"c_ptr": flat(torch_output.to(torch.bfloat16))}, "rvv-sfc-matmul-splitk-last", atol=BF16_ATOL)

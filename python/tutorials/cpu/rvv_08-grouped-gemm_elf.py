@@ -115,7 +115,9 @@ def grouped_matmul_kernel(
 torch.manual_seed(0)
 triton.runtime.driver.set_active_to_cpu()
 
-BLOCK_SIZE_M = BLOCK_SIZE_N = BLOCK_SIZE_K = 32
+GPU_BLOCK_SIZE_M, GPU_BLOCK_SIZE_N, GPU_BLOCK_SIZE_K = 128, 128, 32
+CPU_BLOCK_SIZE_M, CPU_BLOCK_SIZE_N, CPU_BLOCK_SIZE_K = 16, 16, 32
+BLOCK_SIZE_M, BLOCK_SIZE_N, BLOCK_SIZE_K = CPU_BLOCK_SIZE_M, CPU_BLOCK_SIZE_N, CPU_BLOCK_SIZE_K
 NUM_SM = 4
 # <M, N, K> of each GEMM; full tiles only, as the kernel assumes.
 group_m = [64, 96, 32, 128]

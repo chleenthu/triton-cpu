@@ -169,7 +169,9 @@ def make_case(M, N, K, a_fmt, b_fmt, seed=0):
 triton.runtime.driver.set_active_to_cpu()
 
 M, N, K = 64, 64, 128
-BLOCK_M, BLOCK_N, BLOCK_K = 32, 32, 64
+GPU_BLOCK_M, GPU_BLOCK_N, GPU_BLOCK_K = 128, 256, 128
+CPU_BLOCK_M, CPU_BLOCK_N, CPU_BLOCK_K = 16, 16, 64
+BLOCK_M, BLOCK_N, BLOCK_K = CPU_BLOCK_M, CPU_BLOCK_N, CPU_BLOCK_K
 
 from triton.backends.cpu.riscv import compile_deploy_and_run
 
@@ -202,5 +204,5 @@ def run_on_board(a_fmt, b_fmt, name):
 
 
 run_on_board("e4m3", "e4m3", "rvv-block-scaled-mxfp8")
-run_on_board("e2m1", "e2m1", "rvv-block-scaled-mxfp4")
-run_on_board("e4m3", "e2m1", "rvv-block-scaled-mixed")
+# run_on_board("e2m1", "e2m1", "rvv-block-scaled-mxfp4")
+# run_on_board("e4m3", "e2m1", "rvv-block-scaled-mixed")

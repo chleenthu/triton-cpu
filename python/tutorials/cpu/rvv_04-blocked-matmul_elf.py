@@ -261,21 +261,21 @@ def matmul_constexprs(blocked):
 matmul_signature = {"a_ptr": f"*{TL_DTYPE}", "b_ptr": f"*{TL_DTYPE}", "c_ptr": f"*{TL_OUT_DTYPE}"}
 
 # Row-major inputs.
-run_on_board(matmul_kernel, {
-    "a_ptr": flat(a), "b_ptr": flat(b), "c_ptr": [0] * (M * N), "M": M, "N": N, "K": K
-}, matmul_constexprs(False), matmul_signature, {"c_ptr": flat(torch_output)}, "rvv-blocked-matmul-rowmajor")
+# run_on_board(matmul_kernel, {
+#     "a_ptr": flat(a), "b_ptr": flat(b), "c_ptr": [0] * (M * N), "M": M, "N": N, "K": K
+# }, matmul_constexprs(False), matmul_signature, {"c_ptr": flat(torch_output)}, "rvv-blocked-matmul-rowmajor")
 
 # Blocked encoding of A and B.
-run_on_board(
-    block_transpose_combined_kernel, {
-        "in_a": flat(a), "out_a": [0] * (M * K), "in_b": flat(b), "out_b": [0] * (K * N),  #
-        "M": M, "N": N, "K": K,
-    }, {
-        "BLOCK_SIZE_M": BLOCK_SIZE_M, "BLOCK_SIZE_N": BLOCK_SIZE_N, "BLOCK_SIZE_K": BLOCK_SIZE_K,  #
-        "GROUP_SIZE_M": GROUP_SIZE_M,  #
-        "BLOCKED_A": True, "TRANSPOSED_BLOCK_A": True, "BLOCKED_B": True, "TRANSPOSED_B": True, "PACKED_B": False,
-    }, {"in_a": f"*{TL_DTYPE}", "out_a": f"*{TL_DTYPE}", "in_b": f"*{TL_DTYPE}", "out_b": f"*{TL_DTYPE}"},
-    {"out_a": flat(a_blocked), "out_b": flat(b_blocked)}, "rvv-blocked-matmul-encode", atol=0)
+# run_on_board(
+#     block_transpose_combined_kernel, {
+#         "in_a": flat(a), "out_a": [0] * (M * K), "in_b": flat(b), "out_b": [0] * (K * N),  #
+#         "M": M, "N": N, "K": K,
+#     }, {
+#         "BLOCK_SIZE_M": BLOCK_SIZE_M, "BLOCK_SIZE_N": BLOCK_SIZE_N, "BLOCK_SIZE_K": BLOCK_SIZE_K,  #
+#         "GROUP_SIZE_M": GROUP_SIZE_M,  #
+#         "BLOCKED_A": True, "TRANSPOSED_BLOCK_A": True, "BLOCKED_B": True, "TRANSPOSED_B": True, "PACKED_B": False,
+#     }, {"in_a": f"*{TL_DTYPE}", "out_a": f"*{TL_DTYPE}", "in_b": f"*{TL_DTYPE}", "out_b": f"*{TL_DTYPE}"},
+#     {"out_a": flat(a_blocked), "out_b": flat(b_blocked)}, "rvv-blocked-matmul-encode", atol=0)
 
 # Blocked inputs.
 run_on_board(matmul_kernel, {

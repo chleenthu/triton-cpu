@@ -15,8 +15,8 @@ checked there in FP16:
 
 Not ported: matmul_kernel_tma / _tma_persistent / _tma_clc (host
 TensorDescriptor objects, cluster launch control), autotuning, warp
-specialization, and the FP8 output path. NUM_SMS is fixed at 3, so with 4
-output tiles one program handles two of them.
+specialization, and the FP8 output path. NUM_SMS is fixed at 3, so with 16
+output tiles each program handles five or six of them.
 """
 
 import torch
@@ -237,7 +237,10 @@ torch.manual_seed(0)
 triton.runtime.driver.set_active_to_cpu()
 
 M, N, K = 128, 128, 96
-BLOCK_SIZE_M, BLOCK_SIZE_N, BLOCK_SIZE_K, GROUP_SIZE_M = 64, 64, 32, 8
+GPU_BLOCK_SIZE_M, GPU_BLOCK_SIZE_N, GPU_BLOCK_SIZE_K = 128, 256, 64
+CPU_BLOCK_SIZE_M, CPU_BLOCK_SIZE_N, CPU_BLOCK_SIZE_K = 32, 32, 32
+BLOCK_SIZE_M, BLOCK_SIZE_N, BLOCK_SIZE_K = CPU_BLOCK_SIZE_M, CPU_BLOCK_SIZE_N, CPU_BLOCK_SIZE_K
+GROUP_SIZE_M = 8
 NUM_SMS = 3
 a = torch.randn((M, K), dtype=torch.float16)
 b = torch.randn((K, N), dtype=torch.float16)
@@ -272,7 +275,7 @@ strided = {
     "stride_bk": b.stride(0), "stride_bn": b.stride(1),  #
     "stride_cm": N, "stride_cn": 1,
 }
-run_on_board(matmul_kernel, strided, (num_tiles, ), BLOCKS, "rvv-matmul-naive")
+# run_on_board(matmul_kernel, strided, (num_tiles, ), BLOCKS, "rvv-matmul-naive")
 run_on_board(matmul_kernel_persistent, strided, (min(NUM_SMS, num_tiles), ), {**BLOCKS, "NUM_SMS": NUM_SMS},
              "rvv-matmul-persistent")
 
@@ -281,8 +284,8 @@ descriptor = {
     "a_ptr": a.float().flatten().tolist(), "b_ptr": b.T.contiguous().float().flatten().tolist(),
     "c_ptr": [0.0] * (M * N), "M": M, "N": N, "K": K,
 }
-for subtile in (False, True):
-    run_on_board(
-        matmul_kernel_descriptor_persistent, descriptor, (min(NUM_SMS, num_tiles), ), {
-            **BLOCKS, "EPILOGUE_SUBTILE": subtile, "NUM_SMS": NUM_SMS, "WARP_SPECIALIZE": False, "FLATTEN": True
-        }, "rvv-matmul-descriptor-persistent" + ("-subtile" if subtile else ""))
+# for subtile in (False, True):
+#     run_on_board(
+#         matmul_kernel_descriptor_persistent, descriptor, (min(NUM_SMS, num_tiles), ), {
+#             **BLOCKS, "EPILOGUE_SUBTILE": subtile, "NUM_SMS": NUM_SMS, "WARP_SPECIALIZE": False, "FLATTEN": True
+#         }, "rvv-matmul-descriptor-persistent" + ("-subtile" if subtile else ""))

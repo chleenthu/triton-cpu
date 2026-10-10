@@ -41,7 +41,9 @@ torch.manual_seed(0)
 triton.runtime.driver.set_active_to_cpu()
 
 size = 9843  # not a multiple of BLOCK_SIZE, so the last block is masked
-BLOCK_SIZE = 1024
+GPU_BLOCK_SIZE = 1024
+CPU_BLOCK_SIZE = 256
+BLOCK_SIZE = CPU_BLOCK_SIZE
 x = torch.rand(size)
 
 from triton.backends.cpu.riscv import compile_deploy_and_run

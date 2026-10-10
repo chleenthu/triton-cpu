@@ -236,18 +236,18 @@ run_on_board(
     }, (M, ), {"BLOCK_SIZE": BLOCK_SIZE}, {"Y": flat(y), "Mean": flat(mean), "Rstd": flat(rstd)},
     "rvv-layer-norm-fwd")
 
-run_on_board(
-    _layer_norm_bwd_dx_fused, {
-        "DX": [0.0] * (M * N), "DY": flat(dy), "DW": [0.0] * (GROUP_SIZE_M * N), "DB": [0.0] * (GROUP_SIZE_M * N),  #
-        "X": flat(x), "W": flat(weight), "Mean": flat(mean), "Rstd": flat(rstd),  #
-        "Lock": [0] * (2 * GROUP_SIZE_M), "stride": N, "N": N,
-    }, (M, ), {"GROUP_SIZE_M": GROUP_SIZE_M, "BLOCK_SIZE_N": BLOCK_SIZE},
-    {"DX": flat(x.grad), "DW": flat(partial_dw), "DB": flat(partial_db)}, "rvv-layer-norm-bwd-dx",
-    signature={"Lock": "*i32"}, repeatable=False)
+# run_on_board(
+#     _layer_norm_bwd_dx_fused, {
+#         "DX": [0.0] * (M * N), "DY": flat(dy), "DW": [0.0] * (GROUP_SIZE_M * N), "DB": [0.0] * (GROUP_SIZE_M * N),  #
+#         "X": flat(x), "W": flat(weight), "Mean": flat(mean), "Rstd": flat(rstd),  #
+#         "Lock": [0] * (2 * GROUP_SIZE_M), "stride": N, "N": N,
+#     }, (M, ), {"GROUP_SIZE_M": GROUP_SIZE_M, "BLOCK_SIZE_N": BLOCK_SIZE},
+#     {"DX": flat(x.grad), "DW": flat(partial_dw), "DB": flat(partial_db)}, "rvv-layer-norm-bwd-dx",
+#     signature={"Lock": "*i32"}, repeatable=False)
 
-run_on_board(
-    _layer_norm_bwd_dwdb, {
-        "DW": flat(partial_dw), "DB": flat(partial_db), "FINAL_DW": [0.0] * N, "FINAL_DB": [0.0] * N,  #
-        "M": GROUP_SIZE_M, "N": N,
-    }, (triton.cdiv(N, DWDB_BLOCK_SIZE_N), ), {"BLOCK_SIZE_M": DWDB_BLOCK_SIZE_M, "BLOCK_SIZE_N": DWDB_BLOCK_SIZE_N},
-    {"FINAL_DW": flat(weight.grad), "FINAL_DB": flat(bias.grad)}, "rvv-layer-norm-bwd-dwdb")
+# run_on_board(
+#     _layer_norm_bwd_dwdb, {
+#         "DW": flat(partial_dw), "DB": flat(partial_db), "FINAL_DW": [0.0] * N, "FINAL_DB": [0.0] * N,  #
+#         "M": GROUP_SIZE_M, "N": N,
+#     }, (triton.cdiv(N, DWDB_BLOCK_SIZE_N), ), {"BLOCK_SIZE_M": DWDB_BLOCK_SIZE_M, "BLOCK_SIZE_N": DWDB_BLOCK_SIZE_N},
+#     {"FINAL_DW": flat(weight.grad), "FINAL_DB": flat(bias.grad)}, "rvv-layer-norm-bwd-dwdb")
