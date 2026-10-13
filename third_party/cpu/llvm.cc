@@ -108,7 +108,6 @@ void setRISCV64CodegenOptions() {
   std::vector<std::string> extra;
   {
     // TRITON_RISCV_LLVM_ARGS: extra whitespace-separated LLVM options, e.g.
-    // "-custom-sink -custom-remat -custom-a".
     std::istringstream iss(mlir::triton::tools::getStrEnv("TRITON_RISCV_LLVM_ARGS"));
     for (std::string tok; iss >> tok;)
       extra.push_back(tok);
