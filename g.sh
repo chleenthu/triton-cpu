@@ -1,5 +1,5 @@
 #!/bin/bash
-
+cd ~/triton-cpu
 export LLVM_BUILD_DIR=$HOME/llvm-project/install
 source .venv/bin/activate
 # Default symbol visibility: required with shared MLIR libs, else trait TypeIDs
@@ -34,18 +34,19 @@ export OMP_NUM_THREADS=8
 export TRITON_RISCV_LMUL=8
 export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
 
+cd python/tutorials/cpu
+KERNEL=reshape
 export TRITON_ALWAYS_COMPILE=1
 export TRITON_KERNEL_DUMP=1
-export TRITON_DUMP_DIR=artifacts/dump/non_reduce2d
+export TRITON_DUMP_DIR=artifacts/dump/$KERNEL
 export TRITON_CPU_BACKEND=1
 #export TRITON_CPU_FLIP_TO_SHUFFLE=1
 #export TRITON_VSETVL_MINE=1
 #python python/tutorials/cpu/rvv_03-matrix-multiplication_elf.py
-python python/tutorials/cpu/rvv_reduce2d_elf.py
+python rvv_"$KERNEL"_elf.py
 
-export TRITON_DUMP_DIR=artifacts/dump/reduce2d
+export TRITON_DUMP_DIR=artifacts/dump/$KERNEL
 export TRITON_VSETVL_REDUCE=1
-python python/tutorials/cpu/rvv_mask_reduce2d_elf.py
+#python python/tutorials/cpu/rvv_permute_elf.py
 #python python/tutorials/cpu/rvv_reverse_v2_elf.py
-#python python/tutorials/cpu/rvv_reverse_elf.py
 #python python/tutorials/cpu/rvv_01-vector-add_elf.py

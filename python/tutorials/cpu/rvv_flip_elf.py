@@ -12,13 +12,15 @@ and transpose get lowered (and rematerialized) on the RVV backend:
                and stores it at the mirrored column tile (expected = np.flip(a, 1)).
 3. trans2d  -- each program loads a BLOCK_M x BLOCK_N tile, transposes it with tl.permute(x, (1, 0)),
                and stores it at the transposed tile position (expected = a.T).
-4. flip_live -- x stays live across the flip: y = tl.flip(x, 0), then four products of y with
-               loaded weights that are all live at once (r = p0*p1*p2*p3, s = p0+p1+p2+p3), and only
-               then x is used again: out = ((r + s) ^ x) - y. The xor keeps LLVM from reassociating
-               x into an early add, and y is used last, so it is live wherever x is needed again.
-               At BLOCK_LIVE = 64 int32 (LMUL8) this peaks at 56 VR units, above the 32 available,
-               so -custom-reverse can kill x after the flip and rebuild it as flip(y) right before
-               the xor (ReverseRemat[flip-of-flip]: 56 -> 48 VP).
+4. flip_live -- x stays live across the flip: y = tl.flip(x, 0), then three values built from y
+               and two loaded weights are live at once, p0 = y * w0, p1 = y * w1, q0 = y + w0, and
+               only then x is used again: out = p0 * p1 * q0 - x. -custom-reverse kills x after the
+               flip and rebuilds it as flip(y) right before the subtract
+               (ReverseRemat[flip-of-flip]: max VP 40 -> 33 at BLOCK_LIVE = 64 int32, LMUL8). This
+               is the smallest form where the rebuild lowers max VP: with y * w0 - x or
+               (y * w0) * (y * w1) - x the plan still fires, but the rebuild's vid / vrsub index
+               costs one more VP than it saves (24 -> 25, 32 -> 33). The plan only fires with
+               TRITON_CPU_FLIP_TO_SHUFFLE=1; the default xor chain has no single flip to invert.
 
 Note that tl.flip is not a dedicated op: the frontend (triton/language/standard.py) bitcasts to int,
 reshapes the flipped dim to (2, 2, ..., 2) and applies log2(n) xor-sum steps. With
@@ -91,7 +93,7 @@ def trans2d_kernel(a_ptr,  # *Pointer* to input matrix (M x N, row-major).
 
 @triton.jit
 def flip_live_kernel(a_ptr,  # *Pointer* to input vector.
-                     w_ptr,  # *Pointer* to 4 weight vectors, stored back to back.
+                     w_ptr,  # *Pointer* to 2 weight vectors, stored back to back.
                      out_ptr,  # *Pointer* to output vector.
                      n_elements,  # Size of each vector (multiple of BLOCK_SIZE).
                      BLOCK_SIZE: tl.constexpr,  # Number of elements each program should process.
@@ -102,15 +104,12 @@ def flip_live_kernel(a_ptr,  # *Pointer* to input vector.
     y = tl.flip(x, 0)
     w0 = tl.load(w_ptr + offs)
     w1 = tl.load(w_ptr + n_elements + offs)
-    w2 = tl.load(w_ptr + 2 * n_elements + offs)
-    w3 = tl.load(w_ptr + 3 * n_elements + offs)
     p0 = y * w0
     p1 = y * w1
-    p2 = y * w2
-    p3 = y * w3
-    r = p0 * p1 * p2 * p3
-    s = p0 + p1 + p2 + p3
-    tl.store(out_ptr + offs, ((r + s) ^ x) - y)
+    q0 = y + w0
+    r = p0 * p1 * q0
+    out = r - x
+    tl.store(out_ptr + offs, out)
 
 
 # %%
@@ -123,7 +122,7 @@ a1d = torch.rand(size, dtype=torch.float32)
 a2d = torch.rand((M, N), dtype=torch.float32)
 a2d_list = a2d.flatten().tolist()
 a_live = torch.randint(-100, 100, (size, ), dtype=torch.int32)
-w_live = torch.randint(-100, 100, (4 * size, ), dtype=torch.int32)
+w_live = torch.randint(-100, 100, (2 * size, ), dtype=torch.int32)
 
 from triton.backends.cpu.riscv import compile_deploy_and_run
 
@@ -163,8 +162,8 @@ run_on_board(flip1d_kernel, {
 
 # int32 arithmetic wraps around the same way in numpy and on the board, so the check is exact.
 y_live = np.flip(a_live.numpy().reshape(-1, BLOCK_LIVE), 1).reshape(-1)
-p_live = [y_live * w_live.numpy()[k * size:(k + 1) * size] for k in range(4)]
-out_live = ((p_live[0] * p_live[1] * p_live[2] * p_live[3] + sum(p_live)) ^ a_live.numpy()) - y_live
+w0_live, w1_live = w_live.numpy()[:size], w_live.numpy()[size:]
+out_live = (y_live * w0_live) * (y_live * w1_live) * (y_live + w0_live) - a_live.numpy()
 run_on_board(flip_live_kernel, {
     "a_ptr": a_live,
     "w_ptr": w_live,
