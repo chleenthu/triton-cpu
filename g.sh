@@ -48,5 +48,4 @@ python rvv_"$KERNEL"_elf.py
 export TRITON_DUMP_DIR=artifacts/dump/$KERNEL
 export TRITON_VSETVL_REDUCE=1
 #python python/tutorials/cpu/rvv_permute_elf.py
-#python python/tutorials/cpu/rvv_reverse_v2_elf.py
 #python python/tutorials/cpu/rvv_01-vector-add_elf.py

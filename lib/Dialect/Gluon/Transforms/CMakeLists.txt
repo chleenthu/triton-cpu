@@ -3,6 +3,7 @@ add_triton_library(GluonTransforms
   Inline.cpp
   ResolveAutoEncodings.cpp
   SimplifyControlFlow.cpp
+  StripEncodings.cpp
   InferCoalescedEncodings.cpp
   InferLayoutUtils.cpp
 
