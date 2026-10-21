@@ -174,6 +174,8 @@ def main():
         ck = compiled_kernels[kid]
         parts = []
         for arg_idx, (name, kind, *rest) in enumerate(call["args"]):
+            if name not in ck["signature"]:  # specialized into the kernel
+                continue
             if kind == "ptr":
                 addr, offset, size, dtype, smallvals = rest
                 slot_idx = step_input_by_pos.get((call_idx, arg_idx)) if call_idx is not None else None
@@ -338,13 +340,16 @@ def main():
             out.append(f"  clock_gettime(CLOCK_MONOTONIC, &t_decode[{step}]);")
             out.append("")
 
-        out += [
-            '  printf("TTFT: %.3f ms  (prefill %.3f ms + decode0 %.3f ms)\\n",',
-            "         ms_between(t_start, t_decode[0]), ms_between(t_start, t_prefill),",
-            "         ms_between(t_prefill, t_decode[0]));",
-        ]
-        if NUM_DECODE > 1:
-            out.append('  printf("TPOT: %.3f ms  (decode1 - decode0)\\n", ms_between(t_decode[0], t_decode[1]));')
+        # The first output token comes from the prefill logits, so TTFT is the
+        # prefill forward alone. Decode step i consumes token i+1 and produces
+        # token i+2, so every decode step counts toward TPOT.
+        out.append('  printf("TTFT: %.3f ms  (prefill only)\\n", ms_between(t_start, t_prefill));')
+        for step in range(NUM_DECODE):
+            prev = "t_prefill" if step == 0 else f"t_decode[{step - 1}]"
+            out.append(f'  printf("decode{step}: %.3f ms  (token {step + 2})\\n", '
+                       f'ms_between({prev}, t_decode[{step}]));')
+        out.append(f'  printf("TPOT: %.3f ms  (mean of {NUM_DECODE} decode steps)\\n", '
+                   f'ms_between(t_prefill, t_decode[{NUM_DECODE - 1}]) / {NUM_DECODE});')
         if args.profile:
             out.append(f"  for (int i = 0; i < {len(decode_calls)}; ++i) printf(\"PROF %9.3f ms  %s\\n\", g_prof[i], g_prof_name[i]);")
         out += [

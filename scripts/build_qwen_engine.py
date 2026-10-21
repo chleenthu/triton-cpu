@@ -125,7 +125,10 @@ def capturing_init(self, src, metadata):
     _orig_init(self, src, metadata)
     self._capture_name = metadata.name if hasattr(metadata, "name") else metadata["name"]
     self._capture_kernel_id = id(src.fn)
-    self._capture_arg_names = [n for n in src.fn.arg_names if src.signature.get(n) != "constexpr"]
+    # The launcher passes every non-tl.constexpr parameter, including ones Triton
+    # specialized into constants (e.g. xnumel == 1 in decode), so name args by
+    # the parameter list, not by the specialized signature.
+    self._capture_arg_names = [p.name for p in src.fn.params if not p.is_constexpr]
     self._capture_constexprs = dict(src.constants) if hasattr(src, "constants") else {}
     if self._capture_kernel_id not in captured_srcs:
         captured_srcs[self._capture_kernel_id] = src

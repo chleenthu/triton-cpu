@@ -16,5 +16,6 @@ export TRITON_ALWAYS_COMPILE=1
 export TRITON_KERNEL_DUMP=1
 export TRITON_DUMP_DIR=/home/chlee/triton-cpu/dump_sta
 export TRITON_CPU_BACKEND=1
+#python scripts/build_qwen_engine.py
 python scripts/compile_qwen_kernels_riscv.py
 python scripts/gen_qwen_driver.py --host chlee@140.114.78.64
