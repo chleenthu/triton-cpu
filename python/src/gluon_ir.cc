@@ -15,11 +15,13 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/Types.h"
+#include "mlir/Pass/PassManager.h"
 #include "third_party/amd/include/Dialect/TritonAMDGPU/IR/Dialect.h"
 #include "third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.h"
 #include "third_party/amd/lib/TritonAMDGPUTransforms/Utility.h"
 #include "triton/Analysis/Utility.h"
 #include "triton/Dialect/Gluon/IR/Dialect.h"
+#include "triton/Dialect/Gluon/Transforms/Passes.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Attributes.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
@@ -359,6 +361,11 @@ void init_gluon_ir(py::module_ &m) {
       .value("MIN", ttng::TMEMLoadReduceModifier::MIN)
       .value("MAX", ttng::TMEMLoadReduceModifier::MAX)
       .export_values();
+
+  // Lowers layout-only Gluon IR to plain TTIR for backends without layouts.
+  m.def("add_strip_encodings", [](PassManager &pm) {
+    pm.addPass(gluon::createGluonStripEncodingsPass());
+  });
 
   py::class_<GluonOpBuilder, TritonOpBuilder>(m, "GluonOpBuilder",
                                               py::dynamic_attr())

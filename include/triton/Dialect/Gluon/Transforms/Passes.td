@@ -41,6 +41,21 @@ def GluonInline: Pass<"gluon-inline"> {
   let dependentDialects = [];
 }
 
+def GluonStripEncodingsPass : Pass<"gluon-strip-encodings", "mlir::ModuleOp"> {
+  let summary = "Lower layout-only Gluon IR to plain TTIR";
+
+  let description = [{
+    The `gluon-strip-encodings` pass drops the layout encoding from every
+    tensor type, folds `ttg.convert_layout` away and removes the `ttg.*`
+    module attributes, so that a Gluon kernel can be fed to a backend that
+    consumes TTIR (e.g. the CPU backend). It fails on any op that has no
+    TTIR counterpart (shared memory, warp specialization, MMA, TMA, ...).
+  }];
+  let dependentDialects = [
+    "mlir::triton::TritonDialect",
+  ];
+}
+
 def GluonSimplifyControlFlow: Pass<"gluon-slimplify-control-flow"> {
   let summary = "simplifications for control flow ops";
 

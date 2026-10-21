@@ -32,10 +32,10 @@ export TRITON_LOCAL_LIBOMP_PATH=$HOME/.triton-native-libomp
 #export TRITON_BENCH_ITERS=200
 export OMP_NUM_THREADS=8
 export TRITON_RISCV_LMUL=8
-export TRITON_RISCV_LLVM_ARGS="-custom-reverse -debug-only=expandpseudos"
+export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
 
 cd python/tutorials/cpu
-KERNEL=join
+KERNEL=gluon
 export TRITON_ALWAYS_COMPILE=1
 export TRITON_KERNEL_DUMP=1
 export TRITON_DUMP_DIR=artifacts/dump/$KERNEL
