@@ -35,7 +35,7 @@ export TRITON_RISCV_LMUL=8
 export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
 
 cd python/tutorials/cpu
-KERNEL=gluon
+KERNEL=mask2d
 export TRITON_ALWAYS_COMPILE=1
 export TRITON_KERNEL_DUMP=1
 export TRITON_DUMP_DIR=artifacts/dump/$KERNEL

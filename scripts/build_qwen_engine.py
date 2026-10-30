@@ -36,6 +36,15 @@ Phase C (scripts/gen_qwen_driver.py, separate process): consumes the manifest th
 script writes and emits+builds driver.c.
 """
 import os
+
+# Skip the (slow) capture if a previous run already produced both manifests; set
+# QWEN_REBUILD=1 to force a rebuild. Checked before the heavy imports below.
+_engine_dir = os.path.join(os.environ["HOME"], "qwen_triton_engine")
+if os.environ.get("QWEN_REBUILD") != "1" and all(
+        os.path.exists(os.path.join(_engine_dir, f)) for f in ("manifest.pkl", "kernel_manifest.pkl")):
+    print(f"{_engine_dir} already has manifest.pkl + kernel_manifest.pkl, skipping build (QWEN_REBUILD=1 to force)")
+    raise SystemExit(0)
+
 os.environ["TRITON_DEFAULT_BACKEND"] = "cpu"
 os.environ["TRITON_CPU_TARGET"] = "native"
 import triton

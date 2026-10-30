@@ -8,8 +8,10 @@ One kernel that keeps x live across a tl.cumsum, used to see what a prefix sum l
 cumsum_live -- each program loads BLOCK_SIZE int32 values x, and takes their prefix sum,
                y = tl.cumsum(x, 0), so y[i] = x[0] + ... + x[i]. Then two products of y with loaded
                weights are live at once, and only then x is used again: out = ((y * w0) * (y * w1)) - x.
-               A prefix sum is exactly invertible, x[i] = y[i] - y[i - 1] (vslide1up y, 0 and vsub),
-               so x could be rebuilt from y; no plan matches this yet.
+               A prefix sum is exactly invertible, x[i] = y[i] - y[i - 1]: -custom-reverse kills x after
+               the scan and rebuilds it as y - vslide1up(y, 0) (ReverseRemat[diff-of-prefix-sum]). The
+               scan is lowered as masked slides, merges and adds; the plan recognizes y by following
+               every lane of the values computed from x as a sum of x's lanes.
 
 All sizes are exact multiples of the tile sizes, so no masks are involved.
 """

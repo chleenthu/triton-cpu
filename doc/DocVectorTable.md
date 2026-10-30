@@ -16,8 +16,10 @@ Which Triton ops and which RVV instructions `--custom-reverse` can rebuild a val
 | Widen | `vsext` / `vzext`, `vwcvt(u)`, `vfwcvt` | `vnsrl.wi 0` / `vfncvt(.rtz)`, per x2 step | implemented (`narrow-of-widen`), vf2 / vf4 / vf8 |
 | Flip (`tl.flip`), permutation | `vid` ; `vrsub` ; `vrgather` ; `vslidedown` | same gather again, or inverse index | implemented (`flip-of-flip`, `inverse-permutation-gather`) |
 | Self-inverse permutation (block swaps, `tl.sum` butterfly step) | `vrgatherei16.vv` by a constant index `p`, `p == inverse(p)` | the same gather with the same index (`vrgatherei16.vv y, idx`) | implemented (self-inverse) |
-| Mask to vector | `vmerge.vim 0, -1` | `vmsne.vi 0` | possible |
-| Widen by k | `vwadd.vx`, `vfwmul.vf` | `narrow(y - k)`, `narrow(y / k)` | possible |
+| Mask to vector | `vmerge.vim 0, -1` | `vmsne.vi 0` | implemented (`mask-of-merge`) |
+| Concatenate (`tl.cat`) | `vslideup.v[xi] y, b, off`, `a` as passthru | `a` = `COPY` of `y`'s low sub-register; `b = vslidedown y, off` at `b`'s VL | implemented (`low-of-concat`, `slidedown-of-concat`) |
+| Prefix sum (`tl.cumsum`) | `vslideup` (some masked by constant masks) ; `vmv.v.v` merges ; `vadd`, `log2(n)` steps | `v = y - vslide1up(y, 0)` | implemented (`diff-of-prefix-sum`), integer only |
+| Widen by k | `vwadd(u).vx`, `vwsub(u).vx`, `vfwmul.vf` | `vnsrl.wi 0` ; `vsub.vx k` (`vadd.vx k` for `vwsub`) at the source's SEW; `narrow(y / k)` | implemented for `vwadd(u).vx` / `vwsub(u).vx` (`narrow-of-widen`); `vfwmul.vf` possible |
 
 ### Non-Elementwise Ops That Cannot
 
