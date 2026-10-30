@@ -1,0 +1,204 @@
+tt.load: %a_18 = tt.load %a_12, %a_16, %cst : tensor<8x16x!tt.ptr<f32>>  // A = tl.load(ptrs, mask, other=0) on the 8x16 tile; mask %a_16 is AnalyzeTailMasks' tail_mask
+  contiguous row-major: one vector load per row  // pointers are row-major contiguous (axis info) -> 8 row ops of vector<16xf32>
+    getTailRowMask row=[0] {                     // build row 0's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %a_16 = triton_cpu.tail_mask %a_14, %a_15 : tensor<8x16xi1>  // bounds: %a_14 = M - rm (rows), %a_15 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %a_14 > 0                        // cmpi sgt: M - rm > 0, i.e. row rm+0 < M exists
+      len = row on ? %a_15 : 0                   // select(row on, N - rn, 0): row 0's active lane count
+      built: %a_34 = vector.create_mask %a_33 : vector<16xi1>  // row 0's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [0]: %a_36 = vector.maskedload %a_26[%a_18], %a_34, %a_35 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // A row 0: memref %a_26 at row rm+0, index %a_18 = 0 (printed mid-conversion), mask %a_34 from the block above, pass-through %a_35 = row 0 of other (0)
+    getTailRowMask row=[1] {                     // build row 1's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %a_16 = triton_cpu.tail_mask %a_14, %a_15 : tensor<8x16xi1>  // bounds: %a_14 = M - rm (rows), %a_15 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %a_14 > 1                        // cmpi sgt: M - rm > 1, i.e. row rm+1 < M exists
+      len = row on ? %a_15 : 0                   // select(row on, N - rn, 0): row 1's active lane count
+      built: %a_53 = vector.create_mask %a_52 : vector<16xi1>  // row 1's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [1]: %a_55 = vector.maskedload %a_45[%a_18], %a_53, %a_54 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // A row 1: memref %a_45 at row rm+1, index %a_18 = 0 (printed mid-conversion), mask %a_53 from the block above, pass-through %a_54 = row 1 of other (0)
+    getTailRowMask row=[2] {                     // build row 2's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %a_16 = triton_cpu.tail_mask %a_14, %a_15 : tensor<8x16xi1>  // bounds: %a_14 = M - rm (rows), %a_15 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %a_14 > 2                        // cmpi sgt: M - rm > 2, i.e. row rm+2 < M exists
+      len = row on ? %a_15 : 0                   // select(row on, N - rn, 0): row 2's active lane count
+      built: %a_72 = vector.create_mask %a_71 : vector<16xi1>  // row 2's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [2]: %a_74 = vector.maskedload %a_64[%a_18], %a_72, %a_73 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // A row 2: memref %a_64 at row rm+2, index %a_18 = 0 (printed mid-conversion), mask %a_72 from the block above, pass-through %a_73 = row 2 of other (0)
+    getTailRowMask row=[3] {                     // build row 3's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %a_16 = triton_cpu.tail_mask %a_14, %a_15 : tensor<8x16xi1>  // bounds: %a_14 = M - rm (rows), %a_15 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %a_14 > 3                        // cmpi sgt: M - rm > 3, i.e. row rm+3 < M exists
+      len = row on ? %a_15 : 0                   // select(row on, N - rn, 0): row 3's active lane count
+      built: %a_91 = vector.create_mask %a_90 : vector<16xi1>  // row 3's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [3]: %a_93 = vector.maskedload %a_83[%a_18], %a_91, %a_92 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // A row 3: memref %a_83 at row rm+3, index %a_18 = 0 (printed mid-conversion), mask %a_91 from the block above, pass-through %a_92 = row 3 of other (0)
+    getTailRowMask row=[4] {                     // build row 4's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %a_16 = triton_cpu.tail_mask %a_14, %a_15 : tensor<8x16xi1>  // bounds: %a_14 = M - rm (rows), %a_15 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %a_14 > 4                        // cmpi sgt: M - rm > 4, i.e. row rm+4 < M exists
+      len = row on ? %a_15 : 0                   // select(row on, N - rn, 0): row 4's active lane count
+      built: %a_110 = vector.create_mask %a_109 : vector<16xi1>  // row 4's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [4]: %a_112 = vector.maskedload %a_102[%a_18], %a_110, %a_111 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // A row 4: memref %a_102 at row rm+4, index %a_18 = 0 (printed mid-conversion), mask %a_110 from the block above, pass-through %a_111 = row 4 of other (0)
+    getTailRowMask row=[5] {                     // build row 5's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %a_16 = triton_cpu.tail_mask %a_14, %a_15 : tensor<8x16xi1>  // bounds: %a_14 = M - rm (rows), %a_15 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %a_14 > 5                        // cmpi sgt: M - rm > 5, i.e. row rm+5 < M exists
+      len = row on ? %a_15 : 0                   // select(row on, N - rn, 0): row 5's active lane count
+      built: %a_129 = vector.create_mask %a_128 : vector<16xi1>  // row 5's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [5]: %a_131 = vector.maskedload %a_121[%a_18], %a_129, %a_130 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // A row 5: memref %a_121 at row rm+5, index %a_18 = 0 (printed mid-conversion), mask %a_129 from the block above, pass-through %a_130 = row 5 of other (0)
+    getTailRowMask row=[6] {                     // build row 6's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %a_16 = triton_cpu.tail_mask %a_14, %a_15 : tensor<8x16xi1>  // bounds: %a_14 = M - rm (rows), %a_15 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %a_14 > 6                        // cmpi sgt: M - rm > 6, i.e. row rm+6 < M exists
+      len = row on ? %a_15 : 0                   // select(row on, N - rn, 0): row 6's active lane count
+      built: %a_148 = vector.create_mask %a_147 : vector<16xi1>  // row 6's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [6]: %a_150 = vector.maskedload %a_140[%a_18], %a_148, %a_149 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // A row 6: memref %a_140 at row rm+6, index %a_18 = 0 (printed mid-conversion), mask %a_148 from the block above, pass-through %a_149 = row 6 of other (0)
+    getTailRowMask row=[7] {                     // build row 7's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %a_16 = triton_cpu.tail_mask %a_14, %a_15 : tensor<8x16xi1>  // bounds: %a_14 = M - rm (rows), %a_15 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %a_14 > 7                        // cmpi sgt: M - rm > 7, i.e. row rm+7 < M exists
+      len = row on ? %a_15 : 0                   // select(row on, N - rn, 0): row 7's active lane count
+      built: %a_167 = vector.create_mask %a_166 : vector<16xi1>  // row 7's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [7]: %a_169 = vector.maskedload %a_159[%a_18], %a_167, %a_168 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // A row 7: memref %a_159 at row rm+7, index %a_18 = 0 (printed mid-conversion), mask %a_167 from the block above, pass-through %a_168 = row 7 of other (0)
+tt.load: %b_178 = tt.load %b_172, %b_176, %cst : tensor<8x16x!tt.ptr<f32>>  // B = tl.load(ptrs, mask, other=0) on the 8x16 tile; mask %b_176 is AnalyzeTailMasks' tail_mask
+  contiguous row-major: one vector load per row  // pointers are row-major contiguous (axis info) -> 8 row ops of vector<16xf32>
+    getTailRowMask row=[0] {                     // build row 0's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %b_176 = triton_cpu.tail_mask %b_174, %b_175 : tensor<8x16xi1>  // bounds: %b_174 = M - rm (rows), %b_175 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %b_174 > 0                       // cmpi sgt: M - rm > 0, i.e. row rm+0 < M exists
+      len = row on ? %b_175 : 0                  // select(row on, N - rn, 0): row 0's active lane count
+      built: %b_194 = vector.create_mask %b_193 : vector<16xi1>  // row 0's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [0]: %b_196 = vector.maskedload %b_186[%b_178], %b_194, %b_195 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // B row 0: memref %b_186 at row rm+0, index %b_178 = 0 (printed mid-conversion), mask %b_194 from the block above, pass-through %b_195 = row 0 of other (0)
+    getTailRowMask row=[1] {                     // build row 1's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %b_176 = triton_cpu.tail_mask %b_174, %b_175 : tensor<8x16xi1>  // bounds: %b_174 = M - rm (rows), %b_175 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %b_174 > 1                       // cmpi sgt: M - rm > 1, i.e. row rm+1 < M exists
+      len = row on ? %b_175 : 0                  // select(row on, N - rn, 0): row 1's active lane count
+      built: %b_213 = vector.create_mask %b_212 : vector<16xi1>  // row 1's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [1]: %b_215 = vector.maskedload %b_205[%b_178], %b_213, %b_214 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // B row 1: memref %b_205 at row rm+1, index %b_178 = 0 (printed mid-conversion), mask %b_213 from the block above, pass-through %b_214 = row 1 of other (0)
+    getTailRowMask row=[2] {                     // build row 2's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %b_176 = triton_cpu.tail_mask %b_174, %b_175 : tensor<8x16xi1>  // bounds: %b_174 = M - rm (rows), %b_175 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %b_174 > 2                       // cmpi sgt: M - rm > 2, i.e. row rm+2 < M exists
+      len = row on ? %b_175 : 0                  // select(row on, N - rn, 0): row 2's active lane count
+      built: %b_232 = vector.create_mask %b_231 : vector<16xi1>  // row 2's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [2]: %b_234 = vector.maskedload %b_224[%b_178], %b_232, %b_233 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // B row 2: memref %b_224 at row rm+2, index %b_178 = 0 (printed mid-conversion), mask %b_232 from the block above, pass-through %b_233 = row 2 of other (0)
+    getTailRowMask row=[3] {                     // build row 3's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %b_176 = triton_cpu.tail_mask %b_174, %b_175 : tensor<8x16xi1>  // bounds: %b_174 = M - rm (rows), %b_175 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %b_174 > 3                       // cmpi sgt: M - rm > 3, i.e. row rm+3 < M exists
+      len = row on ? %b_175 : 0                  // select(row on, N - rn, 0): row 3's active lane count
+      built: %b_251 = vector.create_mask %b_250 : vector<16xi1>  // row 3's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [3]: %b_253 = vector.maskedload %b_243[%b_178], %b_251, %b_252 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // B row 3: memref %b_243 at row rm+3, index %b_178 = 0 (printed mid-conversion), mask %b_251 from the block above, pass-through %b_252 = row 3 of other (0)
+    getTailRowMask row=[4] {                     // build row 4's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %b_176 = triton_cpu.tail_mask %b_174, %b_175 : tensor<8x16xi1>  // bounds: %b_174 = M - rm (rows), %b_175 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %b_174 > 4                       // cmpi sgt: M - rm > 4, i.e. row rm+4 < M exists
+      len = row on ? %b_175 : 0                  // select(row on, N - rn, 0): row 4's active lane count
+      built: %b_270 = vector.create_mask %b_269 : vector<16xi1>  // row 4's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [4]: %b_272 = vector.maskedload %b_262[%b_178], %b_270, %b_271 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // B row 4: memref %b_262 at row rm+4, index %b_178 = 0 (printed mid-conversion), mask %b_270 from the block above, pass-through %b_271 = row 4 of other (0)
+    getTailRowMask row=[5] {                     // build row 5's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %b_176 = triton_cpu.tail_mask %b_174, %b_175 : tensor<8x16xi1>  // bounds: %b_174 = M - rm (rows), %b_175 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %b_174 > 5                       // cmpi sgt: M - rm > 5, i.e. row rm+5 < M exists
+      len = row on ? %b_175 : 0                  // select(row on, N - rn, 0): row 5's active lane count
+      built: %b_289 = vector.create_mask %b_288 : vector<16xi1>  // row 5's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [5]: %b_291 = vector.maskedload %b_281[%b_178], %b_289, %b_290 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // B row 5: memref %b_281 at row rm+5, index %b_178 = 0 (printed mid-conversion), mask %b_289 from the block above, pass-through %b_290 = row 5 of other (0)
+    getTailRowMask row=[6] {                     // build row 6's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %b_176 = triton_cpu.tail_mask %b_174, %b_175 : tensor<8x16xi1>  // bounds: %b_174 = M - rm (rows), %b_175 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %b_174 > 6                       // cmpi sgt: M - rm > 6, i.e. row rm+6 < M exists
+      len = row on ? %b_175 : 0                  // select(row on, N - rn, 0): row 6's active lane count
+      built: %b_308 = vector.create_mask %b_307 : vector<16xi1>  // row 6's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [6]: %b_310 = vector.maskedload %b_300[%b_178], %b_308, %b_309 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // B row 6: memref %b_300 at row rm+6, index %b_178 = 0 (printed mid-conversion), mask %b_308 from the block above, pass-through %b_309 = row 6 of other (0)
+    getTailRowMask row=[7] {                     // build row 7's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %b_176 = triton_cpu.tail_mask %b_174, %b_175 : tensor<8x16xi1>  // bounds: %b_174 = M - rm (rows), %b_175 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %b_174 > 7                       // cmpi sgt: M - rm > 7, i.e. row rm+7 < M exists
+      len = row on ? %b_175 : 0                  // select(row on, N - rn, 0): row 7's active lane count
+      built: %b_327 = vector.create_mask %b_326 : vector<16xi1>  // row 7's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [7]: %b_329 = vector.maskedload %b_319[%b_178], %b_327, %b_328 : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // B row 7: memref %b_319 at row rm+7, index %b_178 = 0 (printed mid-conversion), mask %b_327 from the block above, pass-through %b_328 = row 7 of other (0)
+tt.store: tt.store %2, %c_333, %6 : tensor<8x16x!tt.ptr<f32>>  // C store: tl.store(ptrs, %c_333 = alpha*a+b, mask %6); unnamed ops print as plain %N
+  contiguous row-major: one vector store per row // pointers are row-major contiguous (axis info) -> 8 row ops of vector<16xf32>
+    getTailRowMask row=[0] {                     // build row 0's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %6 = triton_cpu.tail_mask %4, %5 : tensor<8x16xi1>  // bounds: %4 = M - rm (rows), %5 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %4 > 0                           // cmpi sgt: M - rm > 0, i.e. row rm+0 < M exists
+      len = row on ? %5 : 0                      // select(row on, N - rn, 0): row 0's active lane count
+      built: %15 = vector.create_mask %14 : vector<16xi1>  // row 0's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [0]: vector.maskedstore %9[%c0], %15, %10 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // C row 0: memref %9 at row rm+0, index %c0 = 0, mask %15 from the block above, value %10 = vector.extract row 0 of alpha*a+b
+    getTailRowMask row=[1] {                     // build row 1's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %6 = triton_cpu.tail_mask %4, %5 : tensor<8x16xi1>  // bounds: %4 = M - rm (rows), %5 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %4 > 1                           // cmpi sgt: M - rm > 1, i.e. row rm+1 < M exists
+      len = row on ? %5 : 0                      // select(row on, N - rn, 0): row 1's active lane count
+      built: %23 = vector.create_mask %22 : vector<16xi1>  // row 1's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [1]: vector.maskedstore %17[%c0], %23, %18 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // C row 1: memref %17 at row rm+1, index %c0 = 0, mask %23 from the block above, value %18 = vector.extract row 1 of alpha*a+b
+    getTailRowMask row=[2] {                     // build row 2's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %6 = triton_cpu.tail_mask %4, %5 : tensor<8x16xi1>  // bounds: %4 = M - rm (rows), %5 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %4 > 2                           // cmpi sgt: M - rm > 2, i.e. row rm+2 < M exists
+      len = row on ? %5 : 0                      // select(row on, N - rn, 0): row 2's active lane count
+      built: %31 = vector.create_mask %30 : vector<16xi1>  // row 2's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [2]: vector.maskedstore %25[%c0], %31, %26 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // C row 2: memref %25 at row rm+2, index %c0 = 0, mask %31 from the block above, value %26 = vector.extract row 2 of alpha*a+b
+    getTailRowMask row=[3] {                     // build row 3's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %6 = triton_cpu.tail_mask %4, %5 : tensor<8x16xi1>  // bounds: %4 = M - rm (rows), %5 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %4 > 3                           // cmpi sgt: M - rm > 3, i.e. row rm+3 < M exists
+      len = row on ? %5 : 0                      // select(row on, N - rn, 0): row 3's active lane count
+      built: %39 = vector.create_mask %38 : vector<16xi1>  // row 3's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [3]: vector.maskedstore %33[%c0], %39, %34 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // C row 3: memref %33 at row rm+3, index %c0 = 0, mask %39 from the block above, value %34 = vector.extract row 3 of alpha*a+b
+    getTailRowMask row=[4] {                     // build row 4's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %6 = triton_cpu.tail_mask %4, %5 : tensor<8x16xi1>  // bounds: %4 = M - rm (rows), %5 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %4 > 4                           // cmpi sgt: M - rm > 4, i.e. row rm+4 < M exists
+      len = row on ? %5 : 0                      // select(row on, N - rn, 0): row 4's active lane count
+      built: %47 = vector.create_mask %46 : vector<16xi1>  // row 4's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [4]: vector.maskedstore %41[%c0], %47, %42 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // C row 4: memref %41 at row rm+4, index %c0 = 0, mask %47 from the block above, value %42 = vector.extract row 4 of alpha*a+b
+    getTailRowMask row=[5] {                     // build row 5's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %6 = triton_cpu.tail_mask %4, %5 : tensor<8x16xi1>  // bounds: %4 = M - rm (rows), %5 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %4 > 5                           // cmpi sgt: M - rm > 5, i.e. row rm+5 < M exists
+      len = row on ? %5 : 0                      // select(row on, N - rn, 0): row 5's active lane count
+      built: %55 = vector.create_mask %54 : vector<16xi1>  // row 5's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [5]: vector.maskedstore %49[%c0], %55, %50 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // C row 5: memref %49 at row rm+5, index %c0 = 0, mask %55 from the block above, value %50 = vector.extract row 5 of alpha*a+b
+    getTailRowMask row=[6] {                     // build row 6's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %6 = triton_cpu.tail_mask %4, %5 : tensor<8x16xi1>  // bounds: %4 = M - rm (rows), %5 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %4 > 6                           // cmpi sgt: M - rm > 6, i.e. row rm+6 < M exists
+      len = row on ? %5 : 0                      // select(row on, N - rn, 0): row 6's active lane count
+      built: %63 = vector.create_mask %62 : vector<16xi1>  // row 6's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [6]: vector.maskedstore %57[%c0], %63, %58 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // C row 6: memref %57 at row rm+6, index %c0 = 0, mask %63 from the block above, value %58 = vector.extract row 6 of alpha*a+b
+    getTailRowMask row=[7] {                     // build row 7's 1-D mask from the tail_mask bounds (not by extracting the 2-D mask)
+      is TailMaskOp: %6 = triton_cpu.tail_mask %4, %5 : tensor<8x16xi1>  // bounds: %4 = M - rm (rows), %5 = N - rn (cols)
+      row mask = create_mask(row inside the leading bounds ? last bound : 0)  // shape 8x16 has a leading dim != 1, so build the select form
+      row on if %4 > 7                           // cmpi sgt: M - rm > 7, i.e. row rm+7 < M exists
+      len = row on ? %5 : 0                      // select(row on, N - rn, 0): row 7's active lane count
+      built: %71 = vector.create_mask %70 : vector<16xi1>  // row 7's mask = create_mask(index_cast(len)); TailMaskToEVL later keeps it as is
+    }
+  row [7]: vector.maskedstore %65[%c0], %71, %66 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // C row 7: memref %65 at row rm+7, index %c0 = 0, mask %71 from the block above, value %66 = vector.extract row 7 of alpha*a+b
+******** Expand Pseudos ********                 // not ConvertMemoryOps: LLVM RISC-V backend debug (TRITON_RISCV_LLVM_ARGS=-debug-only=expandpseudos)
+Custom Sink disabled.                            // not ConvertMemoryOps: printed by the LLVM backend while compiling the kernel
+Vector register usage: max VP 32, SLIL 816       // not ConvertMemoryOps: printed by the LLVM backend (vector register usage report)
+Custom Sink disabled.                            // not ConvertMemoryOps: printed by the LLVM backend while compiling the kernel
+Custom Sink disabled.                            // not ConvertMemoryOps: printed by the LLVM backend while compiling the kernel
+Custom Sink disabled.                            // not ConvertMemoryOps: printed by the LLVM backend while compiling the kernel

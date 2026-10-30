@@ -1,0 +1,552 @@
+masked load: %a_17 = vector.maskedload %a_12[%a_6], %a_16, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 0 of A, a[rm+0][rn..rn+15]; mask %a_16 is already a create_mask -> kept; result feeds vector.to_elements (not lane-wise) -> pass-through kept
+analyzeTailLength depth=0 {                      // mask %a_16 of that op
+  is CreateMaskOp                                // %a_16 = vector.create_mask %a_15 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_15
+    is IndexCastOp                               // %a_15 = arith.index_cast %a_14 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_14
+      is SelectOp (c ? x : 0)                    // %a_14 = arith.select %a_13, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_13                // %a_13 = arith.cmpi sgt, %a_8, %a (%a = 0; M - rm > 0: row 0 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_13                  // %a_13 = arith.cmpi sgt, %a_8, %a (%a = 0; M - rm > 0: row 0 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_16: row 0 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_13                    // %a_13 = arith.cmpi sgt, %a_8, %a (%a = 0; M - rm > 0: row 0 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %a_27 = vector.maskedload %a_22[%a_6], %a_26, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 1 of A, a[rm+1][rn..rn+15]; mask %a_26 is already a create_mask -> kept; result feeds vector.to_elements (not lane-wise) -> pass-through kept
+analyzeTailLength depth=0 {                      // mask %a_26 of that op
+  is CreateMaskOp                                // %a_26 = vector.create_mask %a_25 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_25
+    is IndexCastOp                               // %a_25 = arith.index_cast %a_24 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_24
+      is SelectOp (c ? x : 0)                    // %a_24 = arith.select %a_23, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_23                // %a_23 = arith.cmpi sgt, %a_8, %rm_5 (%rm_5 = 1; M - rm > 1: row 1 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_23                  // %a_23 = arith.cmpi sgt, %a_8, %rm_5 (%rm_5 = 1; M - rm > 1: row 1 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_26: row 1 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_23                    // %a_23 = arith.cmpi sgt, %a_8, %rm_5 (%rm_5 = 1; M - rm > 1: row 1 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %a_37 = vector.maskedload %a_32[%a_6], %a_36, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 2 of A, a[rm+2][rn..rn+15]; mask %a_36 is already a create_mask -> kept; result feeds vector.to_elements (not lane-wise) -> pass-through kept
+analyzeTailLength depth=0 {                      // mask %a_36 of that op
+  is CreateMaskOp                                // %a_36 = vector.create_mask %a_35 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_35
+    is IndexCastOp                               // %a_35 = arith.index_cast %a_34 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_34
+      is SelectOp (c ? x : 0)                    // %a_34 = arith.select %a_33, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_33                // %a_33 = arith.cmpi sgt, %a_8, %rm_4 (%rm_4 = 2; M - rm > 2: row 2 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_33                  // %a_33 = arith.cmpi sgt, %a_8, %rm_4 (%rm_4 = 2; M - rm > 2: row 2 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_36: row 2 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_33                    // %a_33 = arith.cmpi sgt, %a_8, %rm_4 (%rm_4 = 2; M - rm > 2: row 2 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %a_47 = vector.maskedload %a_42[%a_6], %a_46, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 3 of A, a[rm+3][rn..rn+15]; mask %a_46 is already a create_mask -> kept; result feeds vector.to_elements (not lane-wise) -> pass-through kept
+analyzeTailLength depth=0 {                      // mask %a_46 of that op
+  is CreateMaskOp                                // %a_46 = vector.create_mask %a_45 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_45
+    is IndexCastOp                               // %a_45 = arith.index_cast %a_44 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_44
+      is SelectOp (c ? x : 0)                    // %a_44 = arith.select %a_43, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_43                // %a_43 = arith.cmpi sgt, %a_8, %rm_3 (%rm_3 = 3; M - rm > 3: row 3 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_43                  // %a_43 = arith.cmpi sgt, %a_8, %rm_3 (%rm_3 = 3; M - rm > 3: row 3 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_46: row 3 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_43                    // %a_43 = arith.cmpi sgt, %a_8, %rm_3 (%rm_3 = 3; M - rm > 3: row 3 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %a_57 = vector.maskedload %a_52[%a_6], %a_56, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 4 of A, a[rm+4][rn..rn+15]; mask %a_56 is already a create_mask -> kept; result feeds vector.to_elements (not lane-wise) -> pass-through kept
+analyzeTailLength depth=0 {                      // mask %a_56 of that op
+  is CreateMaskOp                                // %a_56 = vector.create_mask %a_55 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_55
+    is IndexCastOp                               // %a_55 = arith.index_cast %a_54 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_54
+      is SelectOp (c ? x : 0)                    // %a_54 = arith.select %a_53, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_53                // %a_53 = arith.cmpi sgt, %a_8, %rm_2 (%rm_2 = 4; M - rm > 4: row 4 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_53                  // %a_53 = arith.cmpi sgt, %a_8, %rm_2 (%rm_2 = 4; M - rm > 4: row 4 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_56: row 4 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_53                    // %a_53 = arith.cmpi sgt, %a_8, %rm_2 (%rm_2 = 4; M - rm > 4: row 4 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %a_67 = vector.maskedload %a_62[%a_6], %a_66, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 5 of A, a[rm+5][rn..rn+15]; mask %a_66 is already a create_mask -> kept; result feeds vector.to_elements (not lane-wise) -> pass-through kept
+analyzeTailLength depth=0 {                      // mask %a_66 of that op
+  is CreateMaskOp                                // %a_66 = vector.create_mask %a_65 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_65
+    is IndexCastOp                               // %a_65 = arith.index_cast %a_64 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_64
+      is SelectOp (c ? x : 0)                    // %a_64 = arith.select %a_63, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_63                // %a_63 = arith.cmpi sgt, %a_8, %rm_1 (%rm_1 = 5; M - rm > 5: row 5 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_63                  // %a_63 = arith.cmpi sgt, %a_8, %rm_1 (%rm_1 = 5; M - rm > 5: row 5 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_66: row 5 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_63                    // %a_63 = arith.cmpi sgt, %a_8, %rm_1 (%rm_1 = 5; M - rm > 5: row 5 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %a_77 = vector.maskedload %a_72[%a_6], %a_76, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 6 of A, a[rm+6][rn..rn+15]; mask %a_76 is already a create_mask -> kept; result feeds vector.to_elements (not lane-wise) -> pass-through kept
+analyzeTailLength depth=0 {                      // mask %a_76 of that op
+  is CreateMaskOp                                // %a_76 = vector.create_mask %a_75 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_75
+    is IndexCastOp                               // %a_75 = arith.index_cast %a_74 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_74
+      is SelectOp (c ? x : 0)                    // %a_74 = arith.select %a_73, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_73                // %a_73 = arith.cmpi sgt, %a_8, %rm_0 (%rm_0 = 6; M - rm > 6: row 6 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_73                  // %a_73 = arith.cmpi sgt, %a_8, %rm_0 (%rm_0 = 6; M - rm > 6: row 6 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_76: row 6 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_73                    // %a_73 = arith.cmpi sgt, %a_8, %rm_0 (%rm_0 = 6; M - rm > 6: row 6 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %a_87 = vector.maskedload %a_82[%a_6], %a_86, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 7 of A, a[rm+7][rn..rn+15]; mask %a_86 is already a create_mask -> kept; result feeds vector.to_elements (not lane-wise) -> pass-through kept
+analyzeTailLength depth=0 {                      // mask %a_86 of that op
+  is CreateMaskOp                                // %a_86 = vector.create_mask %a_85 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_85
+    is IndexCastOp                               // %a_85 = arith.index_cast %a_84 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_84
+      is SelectOp (c ? x : 0)                    // %a_84 = arith.select %a_83, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_83                // %a_83 = arith.cmpi sgt, %a_8, %rm (%rm = 7; M - rm > 7: row 7 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_83                  // %a_83 = arith.cmpi sgt, %a_8, %rm (%rm = 7; M - rm > 7: row 7 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_86: row 7 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_83                    // %a_83 = arith.cmpi sgt, %a_8, %rm (%rm = 7; M - rm > 7: row 7 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %b_98 = vector.maskedload %b_97[%a_6], %a_16, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 0 of B, b[rm+0][rn..rn+15]; reuses A's row-0 mask %a_16 (same tail_mask bounds, CSE'd); kept, no poison
+analyzeTailLength depth=0 {                      // mask %a_16 of that op
+  is CreateMaskOp                                // %a_16 = vector.create_mask %a_15 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_15
+    is IndexCastOp                               // %a_15 = arith.index_cast %a_14 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_14
+      is SelectOp (c ? x : 0)                    // %a_14 = arith.select %a_13, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_13                // %a_13 = arith.cmpi sgt, %a_8, %a (%a = 0; M - rm > 0: row 0 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_13                  // %a_13 = arith.cmpi sgt, %a_8, %a (%a = 0; M - rm > 0: row 0 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_16: row 0 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_13                    // %a_13 = arith.cmpi sgt, %a_8, %a (%a = 0; M - rm > 0: row 0 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %b_101 = vector.maskedload %b_100[%a_6], %a_26, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 1 of B, b[rm+1][rn..rn+15]; reuses A's row-1 mask %a_26 (same tail_mask bounds, CSE'd); kept, no poison
+analyzeTailLength depth=0 {                      // mask %a_26 of that op
+  is CreateMaskOp                                // %a_26 = vector.create_mask %a_25 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_25
+    is IndexCastOp                               // %a_25 = arith.index_cast %a_24 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_24
+      is SelectOp (c ? x : 0)                    // %a_24 = arith.select %a_23, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_23                // %a_23 = arith.cmpi sgt, %a_8, %rm_5 (%rm_5 = 1; M - rm > 1: row 1 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_23                  // %a_23 = arith.cmpi sgt, %a_8, %rm_5 (%rm_5 = 1; M - rm > 1: row 1 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_26: row 1 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_23                    // %a_23 = arith.cmpi sgt, %a_8, %rm_5 (%rm_5 = 1; M - rm > 1: row 1 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %b_104 = vector.maskedload %b_103[%a_6], %a_36, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 2 of B, b[rm+2][rn..rn+15]; reuses A's row-2 mask %a_36 (same tail_mask bounds, CSE'd); kept, no poison
+analyzeTailLength depth=0 {                      // mask %a_36 of that op
+  is CreateMaskOp                                // %a_36 = vector.create_mask %a_35 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_35
+    is IndexCastOp                               // %a_35 = arith.index_cast %a_34 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_34
+      is SelectOp (c ? x : 0)                    // %a_34 = arith.select %a_33, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_33                // %a_33 = arith.cmpi sgt, %a_8, %rm_4 (%rm_4 = 2; M - rm > 2: row 2 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_33                  // %a_33 = arith.cmpi sgt, %a_8, %rm_4 (%rm_4 = 2; M - rm > 2: row 2 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_36: row 2 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_33                    // %a_33 = arith.cmpi sgt, %a_8, %rm_4 (%rm_4 = 2; M - rm > 2: row 2 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %b_107 = vector.maskedload %b_106[%a_6], %a_46, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 3 of B, b[rm+3][rn..rn+15]; reuses A's row-3 mask %a_46 (same tail_mask bounds, CSE'd); kept, no poison
+analyzeTailLength depth=0 {                      // mask %a_46 of that op
+  is CreateMaskOp                                // %a_46 = vector.create_mask %a_45 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_45
+    is IndexCastOp                               // %a_45 = arith.index_cast %a_44 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_44
+      is SelectOp (c ? x : 0)                    // %a_44 = arith.select %a_43, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_43                // %a_43 = arith.cmpi sgt, %a_8, %rm_3 (%rm_3 = 3; M - rm > 3: row 3 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_43                  // %a_43 = arith.cmpi sgt, %a_8, %rm_3 (%rm_3 = 3; M - rm > 3: row 3 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_46: row 3 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_43                    // %a_43 = arith.cmpi sgt, %a_8, %rm_3 (%rm_3 = 3; M - rm > 3: row 3 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %b_110 = vector.maskedload %b_109[%a_6], %a_56, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 4 of B, b[rm+4][rn..rn+15]; reuses A's row-4 mask %a_56 (same tail_mask bounds, CSE'd); kept, no poison
+analyzeTailLength depth=0 {                      // mask %a_56 of that op
+  is CreateMaskOp                                // %a_56 = vector.create_mask %a_55 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_55
+    is IndexCastOp                               // %a_55 = arith.index_cast %a_54 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_54
+      is SelectOp (c ? x : 0)                    // %a_54 = arith.select %a_53, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_53                // %a_53 = arith.cmpi sgt, %a_8, %rm_2 (%rm_2 = 4; M - rm > 4: row 4 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_53                  // %a_53 = arith.cmpi sgt, %a_8, %rm_2 (%rm_2 = 4; M - rm > 4: row 4 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_56: row 4 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_53                    // %a_53 = arith.cmpi sgt, %a_8, %rm_2 (%rm_2 = 4; M - rm > 4: row 4 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %b_113 = vector.maskedload %b_112[%a_6], %a_66, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 5 of B, b[rm+5][rn..rn+15]; reuses A's row-5 mask %a_66 (same tail_mask bounds, CSE'd); kept, no poison
+analyzeTailLength depth=0 {                      // mask %a_66 of that op
+  is CreateMaskOp                                // %a_66 = vector.create_mask %a_65 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_65
+    is IndexCastOp                               // %a_65 = arith.index_cast %a_64 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_64
+      is SelectOp (c ? x : 0)                    // %a_64 = arith.select %a_63, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_63                // %a_63 = arith.cmpi sgt, %a_8, %rm_1 (%rm_1 = 5; M - rm > 5: row 5 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_63                  // %a_63 = arith.cmpi sgt, %a_8, %rm_1 (%rm_1 = 5; M - rm > 5: row 5 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_66: row 5 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_63                    // %a_63 = arith.cmpi sgt, %a_8, %rm_1 (%rm_1 = 5; M - rm > 5: row 5 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %b_116 = vector.maskedload %b_115[%a_6], %a_76, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 6 of B, b[rm+6][rn..rn+15]; reuses A's row-6 mask %a_76 (same tail_mask bounds, CSE'd); kept, no poison
+analyzeTailLength depth=0 {                      // mask %a_76 of that op
+  is CreateMaskOp                                // %a_76 = vector.create_mask %a_75 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_75
+    is IndexCastOp                               // %a_75 = arith.index_cast %a_74 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_74
+      is SelectOp (c ? x : 0)                    // %a_74 = arith.select %a_73, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_73                // %a_73 = arith.cmpi sgt, %a_8, %rm_0 (%rm_0 = 6; M - rm > 6: row 6 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_73                  // %a_73 = arith.cmpi sgt, %a_8, %rm_0 (%rm_0 = 6; M - rm > 6: row 6 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_76: row 6 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_73                    // %a_73 = arith.cmpi sgt, %a_8, %rm_0 (%rm_0 = 6; M - rm > 6: row 6 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked load: %b_119 = vector.maskedload %b_118[%a_6], %a_86, %cst : memref<16xf32>, vector<16xi1>, vector<16xf32> into vector<16xf32>  // row 7 of B, b[rm+7][rn..rn+15]; reuses A's row-7 mask %a_86 (same tail_mask bounds, CSE'd); kept, no poison
+analyzeTailLength depth=0 {                      // mask %a_86 of that op
+  is CreateMaskOp                                // %a_86 = vector.create_mask %a_85 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_85
+    is IndexCastOp                               // %a_85 = arith.index_cast %a_84 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_84
+      is SelectOp (c ? x : 0)                    // %a_84 = arith.select %a_83, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_83                // %a_83 = arith.cmpi sgt, %a_8, %rm (%rm = 7; M - rm > 7: row 7 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_83                  // %a_83 = arith.cmpi sgt, %a_8, %rm (%rm = 7; M - rm > 7: row 7 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_86: row 7 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_83                    // %a_83 = arith.cmpi sgt, %a_8, %rm (%rm = 7; M - rm > 7: row 7 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked store: vector.maskedstore %1[%a_6], %a_16, %2 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // row 0 of C, c[rm+0][rn..rn+15]; %2 = vector.extract %c_130[0] (row 0 of alpha*a+b); same mask %a_16, kept
+analyzeTailLength depth=0 {                      // mask %a_16 of that op
+  is CreateMaskOp                                // %a_16 = vector.create_mask %a_15 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_15
+    is IndexCastOp                               // %a_15 = arith.index_cast %a_14 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_14
+      is SelectOp (c ? x : 0)                    // %a_14 = arith.select %a_13, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_13                // %a_13 = arith.cmpi sgt, %a_8, %a (%a = 0; M - rm > 0: row 0 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_13                  // %a_13 = arith.cmpi sgt, %a_8, %a (%a = 0; M - rm > 0: row 0 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_16: row 0 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_13                    // %a_13 = arith.cmpi sgt, %a_8, %a (%a = 0; M - rm > 0: row 0 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked store: vector.maskedstore %4[%a_6], %a_26, %5 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // row 1 of C, c[rm+1][rn..rn+15]; %5 = vector.extract %c_130[1] (row 1 of alpha*a+b); same mask %a_26, kept
+analyzeTailLength depth=0 {                      // mask %a_26 of that op
+  is CreateMaskOp                                // %a_26 = vector.create_mask %a_25 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_25
+    is IndexCastOp                               // %a_25 = arith.index_cast %a_24 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_24
+      is SelectOp (c ? x : 0)                    // %a_24 = arith.select %a_23, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_23                // %a_23 = arith.cmpi sgt, %a_8, %rm_5 (%rm_5 = 1; M - rm > 1: row 1 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_23                  // %a_23 = arith.cmpi sgt, %a_8, %rm_5 (%rm_5 = 1; M - rm > 1: row 1 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_26: row 1 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_23                    // %a_23 = arith.cmpi sgt, %a_8, %rm_5 (%rm_5 = 1; M - rm > 1: row 1 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked store: vector.maskedstore %7[%a_6], %a_36, %8 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // row 2 of C, c[rm+2][rn..rn+15]; %8 = vector.extract %c_130[2] (row 2 of alpha*a+b); same mask %a_36, kept
+analyzeTailLength depth=0 {                      // mask %a_36 of that op
+  is CreateMaskOp                                // %a_36 = vector.create_mask %a_35 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_35
+    is IndexCastOp                               // %a_35 = arith.index_cast %a_34 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_34
+      is SelectOp (c ? x : 0)                    // %a_34 = arith.select %a_33, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_33                // %a_33 = arith.cmpi sgt, %a_8, %rm_4 (%rm_4 = 2; M - rm > 2: row 2 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_33                  // %a_33 = arith.cmpi sgt, %a_8, %rm_4 (%rm_4 = 2; M - rm > 2: row 2 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_36: row 2 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_33                    // %a_33 = arith.cmpi sgt, %a_8, %rm_4 (%rm_4 = 2; M - rm > 2: row 2 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked store: vector.maskedstore %10[%a_6], %a_46, %11 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // row 3 of C, c[rm+3][rn..rn+15]; %11 = vector.extract %c_130[3] (row 3 of alpha*a+b); same mask %a_46, kept
+analyzeTailLength depth=0 {                      // mask %a_46 of that op
+  is CreateMaskOp                                // %a_46 = vector.create_mask %a_45 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_45
+    is IndexCastOp                               // %a_45 = arith.index_cast %a_44 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_44
+      is SelectOp (c ? x : 0)                    // %a_44 = arith.select %a_43, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_43                // %a_43 = arith.cmpi sgt, %a_8, %rm_3 (%rm_3 = 3; M - rm > 3: row 3 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_43                  // %a_43 = arith.cmpi sgt, %a_8, %rm_3 (%rm_3 = 3; M - rm > 3: row 3 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_46: row 3 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_43                    // %a_43 = arith.cmpi sgt, %a_8, %rm_3 (%rm_3 = 3; M - rm > 3: row 3 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked store: vector.maskedstore %13[%a_6], %a_56, %14 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // row 4 of C, c[rm+4][rn..rn+15]; %14 = vector.extract %c_130[4] (row 4 of alpha*a+b); same mask %a_56, kept
+analyzeTailLength depth=0 {                      // mask %a_56 of that op
+  is CreateMaskOp                                // %a_56 = vector.create_mask %a_55 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_55
+    is IndexCastOp                               // %a_55 = arith.index_cast %a_54 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_54
+      is SelectOp (c ? x : 0)                    // %a_54 = arith.select %a_53, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_53                // %a_53 = arith.cmpi sgt, %a_8, %rm_2 (%rm_2 = 4; M - rm > 4: row 4 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_53                  // %a_53 = arith.cmpi sgt, %a_8, %rm_2 (%rm_2 = 4; M - rm > 4: row 4 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_56: row 4 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_53                    // %a_53 = arith.cmpi sgt, %a_8, %rm_2 (%rm_2 = 4; M - rm > 4: row 4 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked store: vector.maskedstore %16[%a_6], %a_66, %17 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // row 5 of C, c[rm+5][rn..rn+15]; %17 = vector.extract %c_130[5] (row 5 of alpha*a+b); same mask %a_66, kept
+analyzeTailLength depth=0 {                      // mask %a_66 of that op
+  is CreateMaskOp                                // %a_66 = vector.create_mask %a_65 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_65
+    is IndexCastOp                               // %a_65 = arith.index_cast %a_64 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_64
+      is SelectOp (c ? x : 0)                    // %a_64 = arith.select %a_63, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_63                // %a_63 = arith.cmpi sgt, %a_8, %rm_1 (%rm_1 = 5; M - rm > 5: row 5 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_63                  // %a_63 = arith.cmpi sgt, %a_8, %rm_1 (%rm_1 = 5; M - rm > 5: row 5 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_66: row 5 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_63                    // %a_63 = arith.cmpi sgt, %a_8, %rm_1 (%rm_1 = 5; M - rm > 5: row 5 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked store: vector.maskedstore %19[%a_6], %a_76, %20 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // row 6 of C, c[rm+6][rn..rn+15]; %20 = vector.extract %c_130[6] (row 6 of alpha*a+b); same mask %a_76, kept
+analyzeTailLength depth=0 {                      // mask %a_76 of that op
+  is CreateMaskOp                                // %a_76 = vector.create_mask %a_75 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_75
+    is IndexCastOp                               // %a_75 = arith.index_cast %a_74 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_74
+      is SelectOp (c ? x : 0)                    // %a_74 = arith.select %a_73, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_73                // %a_73 = arith.cmpi sgt, %a_8, %rm_0 (%rm_0 = 6; M - rm > 6: row 6 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_73                  // %a_73 = arith.cmpi sgt, %a_8, %rm_0 (%rm_0 = 6; M - rm > 6: row 6 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_76: row 6 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_73                    // %a_73 = arith.cmpi sgt, %a_8, %rm_0 (%rm_0 = 6; M - rm > 6: row 6 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}
+masked store: vector.maskedstore %22[%a_6], %a_86, %23 : memref<16xf32>, vector<16xi1>, vector<16xf32>  // row 7 of C, c[rm+7][rn..rn+15]; %23 = vector.extract %c_130[7] (row 7 of alpha*a+b); same mask %a_86, kept
+analyzeTailLength depth=0 {                      // mask %a_86 of that op
+  is CreateMaskOp                                // %a_86 = vector.create_mask %a_85 : vector<16xi1> (1-D: no leading unit dims)
+  analyzeScalarLength depth=1 {                  // create_mask's only operand: %a_85
+    is IndexCastOp                               // %a_85 = arith.index_cast %a_84 : i32 to index -> look through
+    analyzeScalarLength depth=2 {                // %a_84
+      is SelectOp (c ? x : 0)                    // %a_84 = arith.select %a_83, %a_9, %a : i32  (%a = 0)
+      analyzeScalarLength depth=3 {              // true value: %a_9
+        opaque                                   // %a_9 = arith.subi %N, %rn: not const/select/min/max/cast, kept as a value
+        Index %a_9                               // %a_9 = N - rn
+      }
+      Min                                        // select(c, x, 0) == min(c ? 16 : 0, x)
+        AllOrNone n=16 cond=%a_83                // %a_83 = arith.cmpi sgt, %a_8, %rm (%rm = 7; M - rm > 7: row 7 exists) ? 16 : 0
+        Index %a_9                               // %a_9 = N - rn
+    }
+    Min                                          // index_cast is sign-preserving: same length
+      AllOrNone n=16 cond=%a_83                  // %a_83 = arith.cmpi sgt, %a_8, %rm (%rm = 7; M - rm > 7: row 7 exists) ? 16 : 0
+      Index %a_9                                 // %a_9 = N - rn (column tail)
+  }
+  Min                                            // tail length of %a_86: row 7 exists ? N - rn : 0
+    AllOrNone n=16 cond=%a_83                    // %a_83 = arith.cmpi sgt, %a_8, %rm (%rm = 7; M - rm > 7: row 7 exists) ? 16 : 0
+    Index %a_9                                   // %a_9 = N - rn (column tail)
+}

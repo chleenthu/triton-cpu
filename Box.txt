@@ -1,0 +1,306 @@
+analyzeMask depth=0 {                            // mask of %a_19 = tt.load %a_18, %mask_13, %cst
+  is AndIOp                                      // %mask_13 = arith.andi %mask_11, %mask_12 : tensor<8x16xi1>
+  analyzeMask depth=1 {                          // lhs: %mask_11
+    is BroadcastOp                               // %mask_11 = tt.broadcast %mask_7 : tensor<8x1xi1> -> tensor<8x16xi1>
+    analyzeMask depth=2 {                        // %mask_7
+      is CmpIOp slt                              // %mask_7 = arith.cmpi slt, %mask, %mask_6 : tensor<8x1xi32>
+      analyzeInt depth=3 {                       // range side: %mask
+        is ExpandDimsOp                          // %mask = tt.expand_dims %rm_2 {axis = 1} : tensor<8xi32> -> tensor<8x1xi32>
+        analyzeInt depth=4 {                     // %rm_2
+          is AddIOp                              // %rm_2 = arith.addi %rm_1, %rm_0 : tensor<8xi32>
+          analyzeInt depth=5 {                   // %rm_1
+            is SplatOp                           // %rm_1 = tt.splat %rm : i32 -> tensor<8xi32>
+            IntInfo Splat                        // every element is %rm
+              Leaf %2                            // %2 = %rm = arith.muli %pid_m, %c8_i32
+          }
+          analyzeInt depth=5 {                   // %rm_0
+            is MakeRangeOp                       // %rm_0 = tt.make_range {start = 0, end = 8} : tensor<8xi32>
+            IntInfo Range axis=0 (scalar + i_0)  // %rm_0[i] = 0 + i
+              Const 0                            // start = 0
+          }
+          IntInfo Range axis=0 (scalar + i_0)    // %rm_2[i] = %rm + i
+            Leaf %2                              // %rm
+        }
+        IntInfo Range axis=0 (scalar + i_0)      // %mask[i][0] = %rm + i (new axis 1 is after axis 0, so still axis 0)
+          Leaf %2                                // %rm
+      }
+      analyzeInt depth=3 {                       // bound side: %mask_6
+        is SplatOp                               // %mask_6 = tt.splat %M : i32 -> tensor<8x1xi32>
+        IntInfo Splat                            // every element is %M
+          Leaf %arg3                             // %arg3 = %M
+      }
+      Box rank=2                                 // box of %mask_7 (8x1): %rm + i < %M  <=>  i < %M - %rm
+        axis 0:                                  // rows
+          Sub                                    // %M - %rm (the + 0 for slt is folded away)
+            Leaf %arg3                           // %M
+            Leaf %2                              // %rm
+        axis 1:                                  // cols
+          Const 1                                // size-1 axis, all on
+    }
+    Box rank=2                                   // box of %mask_11 (8x16)
+      axis 0:                                    // rows
+        Sub                                      // %M - %rm, unchanged
+          Leaf %arg3                             // %M
+          Leaf %2                                // %rm
+      axis 1:                                    // cols
+        Const 16                                 // 1 -> 16: broadcast axis, AtLeastOne(1, 16) folded to 16
+  }
+  analyzeMask depth=1 {                          // rhs: %mask_12
+    is BroadcastOp                               // %mask_12 = tt.broadcast %mask_10 : tensor<1x16xi1> -> tensor<8x16xi1>
+    analyzeMask depth=2 {                        // %mask_10
+      is CmpIOp slt                              // %mask_10 = arith.cmpi slt, %mask_8, %mask_9 : tensor<1x16xi32>
+      analyzeInt depth=3 {                       // range side: %mask_8
+        is ExpandDimsOp                          // %mask_8 = tt.expand_dims %rn_5 {axis = 0} : tensor<16xi32> -> tensor<1x16xi32>
+        analyzeInt depth=4 {                     // %rn_5
+          is AddIOp                              // %rn_5 = arith.addi %rn_4, %rn_3 : tensor<16xi32>
+          analyzeInt depth=5 {                   // %rn_4
+            is SplatOp                           // %rn_4 = tt.splat %rn : i32 -> tensor<16xi32>
+            IntInfo Splat                        // every element is %rn
+              Leaf %6                            // %6 = %rn = arith.muli %pid_n, %c16_i32
+          }
+          analyzeInt depth=5 {                   // %rn_3
+            is MakeRangeOp                       // %rn_3 = tt.make_range {start = 0, end = 16} : tensor<16xi32>
+            IntInfo Range axis=0 (scalar + i_0)  // %rn_3[j] = 0 + j
+              Const 0                            // start = 0
+          }
+          IntInfo Range axis=0 (scalar + i_0)    // %rn_5[j] = %rn + j
+            Leaf %6                              // %rn
+        }
+        IntInfo Range axis=1 (scalar + i_1)      // %mask_8[0][j] = %rn + j (new axis 0 is in front, so axis 0 -> 1)
+          Leaf %6                                // %rn
+      }
+      analyzeInt depth=3 {                       // bound side: %mask_9
+        is SplatOp                               // %mask_9 = tt.splat %N : i32 -> tensor<1x16xi32>
+        IntInfo Splat                            // every element is %N
+          Leaf %arg4                             // %arg4 = %N
+      }
+      Box rank=2                                 // box of %mask_10 (1x16): %rn + j < %N  <=>  j < %N - %rn
+        axis 0:                                  // rows
+          Const 1                                // size-1 axis, all on
+        axis 1:                                  // cols
+          Sub                                    // %N - %rn
+            Leaf %arg4                           // %N
+            Leaf %6                              // %rn
+    }
+    Box rank=2                                   // box of %mask_12 (8x16)
+      axis 0:                                    // rows
+        Const 8                                  // 1 -> 8: broadcast axis, AtLeastOne(1, 8) folded to 8
+      axis 1:                                    // cols
+        Sub                                      // %N - %rn, unchanged
+          Leaf %arg4                             // %N
+          Leaf %6                                // %rn
+  }
+  Box rank=2                                     // box of %mask_13 = lhs AND rhs: per-axis min, a full axis drops out
+    axis 0:                                      // rows
+      Sub                                        // min(%M - %rm, 8) = %M - %rm
+        Leaf %arg3                               // %M
+        Leaf %2                                  // %rm
+    axis 1:                                      // cols
+      Sub                                        // min(16, %N - %rn) = %N - %rn
+        Leaf %arg4                               // %N
+        Leaf %6                                  // %rn
+}
+analyzeMask depth=0 {                            // mask of %b_21 = tt.load %b_20, %mask_13, %cst
+  is AndIOp                                      // %mask_13 = arith.andi %mask_11, %mask_12 : tensor<8x16xi1>
+  analyzeMask depth=1 {                          // lhs: %mask_11
+    is BroadcastOp                               // %mask_11 = tt.broadcast %mask_7 : tensor<8x1xi1> -> tensor<8x16xi1>
+    analyzeMask depth=2 {                        // %mask_7
+      is CmpIOp slt                              // %mask_7 = arith.cmpi slt, %mask, %mask_6 : tensor<8x1xi32>
+      analyzeInt depth=3 {                       // range side: %mask
+        is ExpandDimsOp                          // %mask = tt.expand_dims %rm_2 {axis = 1} : tensor<8xi32> -> tensor<8x1xi32>
+        analyzeInt depth=4 {                     // %rm_2
+          is AddIOp                              // %rm_2 = arith.addi %rm_1, %rm_0 : tensor<8xi32>
+          analyzeInt depth=5 {                   // %rm_1
+            is SplatOp                           // %rm_1 = tt.splat %rm : i32 -> tensor<8xi32>
+            IntInfo Splat                        // every element is %rm
+              Leaf %2                            // %2 = %rm = arith.muli %pid_m, %c8_i32
+          }
+          analyzeInt depth=5 {                   // %rm_0
+            is MakeRangeOp                       // %rm_0 = tt.make_range {start = 0, end = 8} : tensor<8xi32>
+            IntInfo Range axis=0 (scalar + i_0)  // %rm_0[i] = 0 + i
+              Const 0                            // start = 0
+          }
+          IntInfo Range axis=0 (scalar + i_0)    // %rm_2[i] = %rm + i
+            Leaf %2                              // %rm
+        }
+        IntInfo Range axis=0 (scalar + i_0)      // %mask[i][0] = %rm + i (new axis 1 is after axis 0, so still axis 0)
+          Leaf %2                                // %rm
+      }
+      analyzeInt depth=3 {                       // bound side: %mask_6
+        is SplatOp                               // %mask_6 = tt.splat %M : i32 -> tensor<8x1xi32>
+        IntInfo Splat                            // every element is %M
+          Leaf %arg3                             // %arg3 = %M
+      }
+      Box rank=2                                 // box of %mask_7 (8x1): %rm + i < %M  <=>  i < %M - %rm
+        axis 0:                                  // rows
+          Sub                                    // %M - %rm (the + 0 for slt is folded away)
+            Leaf %arg3                           // %M
+            Leaf %2                              // %rm
+        axis 1:                                  // cols
+          Const 1                                // size-1 axis, all on
+    }
+    Box rank=2                                   // box of %mask_11 (8x16)
+      axis 0:                                    // rows
+        Sub                                      // %M - %rm, unchanged
+          Leaf %arg3                             // %M
+          Leaf %2                                // %rm
+      axis 1:                                    // cols
+        Const 16                                 // 1 -> 16: broadcast axis, AtLeastOne(1, 16) folded to 16
+  }
+  analyzeMask depth=1 {                          // rhs: %mask_12
+    is BroadcastOp                               // %mask_12 = tt.broadcast %mask_10 : tensor<1x16xi1> -> tensor<8x16xi1>
+    analyzeMask depth=2 {                        // %mask_10
+      is CmpIOp slt                              // %mask_10 = arith.cmpi slt, %mask_8, %mask_9 : tensor<1x16xi32>
+      analyzeInt depth=3 {                       // range side: %mask_8
+        is ExpandDimsOp                          // %mask_8 = tt.expand_dims %rn_5 {axis = 0} : tensor<16xi32> -> tensor<1x16xi32>
+        analyzeInt depth=4 {                     // %rn_5
+          is AddIOp                              // %rn_5 = arith.addi %rn_4, %rn_3 : tensor<16xi32>
+          analyzeInt depth=5 {                   // %rn_4
+            is SplatOp                           // %rn_4 = tt.splat %rn : i32 -> tensor<16xi32>
+            IntInfo Splat                        // every element is %rn
+              Leaf %6                            // %6 = %rn = arith.muli %pid_n, %c16_i32
+          }
+          analyzeInt depth=5 {                   // %rn_3
+            is MakeRangeOp                       // %rn_3 = tt.make_range {start = 0, end = 16} : tensor<16xi32>
+            IntInfo Range axis=0 (scalar + i_0)  // %rn_3[j] = 0 + j
+              Const 0                            // start = 0
+          }
+          IntInfo Range axis=0 (scalar + i_0)    // %rn_5[j] = %rn + j
+            Leaf %6                              // %rn
+        }
+        IntInfo Range axis=1 (scalar + i_1)      // %mask_8[0][j] = %rn + j (new axis 0 is in front, so axis 0 -> 1)
+          Leaf %6                                // %rn
+      }
+      analyzeInt depth=3 {                       // bound side: %mask_9
+        is SplatOp                               // %mask_9 = tt.splat %N : i32 -> tensor<1x16xi32>
+        IntInfo Splat                            // every element is %N
+          Leaf %arg4                             // %arg4 = %N
+      }
+      Box rank=2                                 // box of %mask_10 (1x16): %rn + j < %N  <=>  j < %N - %rn
+        axis 0:                                  // rows
+          Const 1                                // size-1 axis, all on
+        axis 1:                                  // cols
+          Sub                                    // %N - %rn
+            Leaf %arg4                           // %N
+            Leaf %6                              // %rn
+    }
+    Box rank=2                                   // box of %mask_12 (8x16)
+      axis 0:                                    // rows
+        Const 8                                  // 1 -> 8: broadcast axis, AtLeastOne(1, 8) folded to 8
+      axis 1:                                    // cols
+        Sub                                      // %N - %rn, unchanged
+          Leaf %arg4                             // %N
+          Leaf %6                                // %rn
+  }
+  Box rank=2                                     // box of %mask_13 = lhs AND rhs: per-axis min, a full axis drops out
+    axis 0:                                      // rows
+      Sub                                        // min(%M - %rm, 8) = %M - %rm
+        Leaf %arg3                               // %M
+        Leaf %2                                  // %rm
+    axis 1:                                      // cols
+      Sub                                        // min(16, %N - %rn) = %N - %rn
+        Leaf %arg4                               // %N
+        Leaf %6                                  // %rn
+}
+analyzeMask depth=0 {                            // mask of tt.store %1, %c_23, %mask_13
+  is AndIOp                                      // %mask_13 = arith.andi %mask_11, %mask_12 : tensor<8x16xi1>
+  analyzeMask depth=1 {                          // lhs: %mask_11
+    is BroadcastOp                               // %mask_11 = tt.broadcast %mask_7 : tensor<8x1xi1> -> tensor<8x16xi1>
+    analyzeMask depth=2 {                        // %mask_7
+      is CmpIOp slt                              // %mask_7 = arith.cmpi slt, %mask, %mask_6 : tensor<8x1xi32>
+      analyzeInt depth=3 {                       // range side: %mask
+        is ExpandDimsOp                          // %mask = tt.expand_dims %rm_2 {axis = 1} : tensor<8xi32> -> tensor<8x1xi32>
+        analyzeInt depth=4 {                     // %rm_2
+          is AddIOp                              // %rm_2 = arith.addi %rm_1, %rm_0 : tensor<8xi32>
+          analyzeInt depth=5 {                   // %rm_1
+            is SplatOp                           // %rm_1 = tt.splat %rm : i32 -> tensor<8xi32>
+            IntInfo Splat                        // every element is %rm
+              Leaf %2                            // %2 = %rm = arith.muli %pid_m, %c8_i32
+          }
+          analyzeInt depth=5 {                   // %rm_0
+            is MakeRangeOp                       // %rm_0 = tt.make_range {start = 0, end = 8} : tensor<8xi32>
+            IntInfo Range axis=0 (scalar + i_0)  // %rm_0[i] = 0 + i
+              Const 0                            // start = 0
+          }
+          IntInfo Range axis=0 (scalar + i_0)    // %rm_2[i] = %rm + i
+            Leaf %2                              // %rm
+        }
+        IntInfo Range axis=0 (scalar + i_0)      // %mask[i][0] = %rm + i (new axis 1 is after axis 0, so still axis 0)
+          Leaf %2                                // %rm
+      }
+      analyzeInt depth=3 {                       // bound side: %mask_6
+        is SplatOp                               // %mask_6 = tt.splat %M : i32 -> tensor<8x1xi32>
+        IntInfo Splat                            // every element is %M
+          Leaf %arg3                             // %arg3 = %M
+      }
+      Box rank=2                                 // box of %mask_7 (8x1): %rm + i < %M  <=>  i < %M - %rm
+        axis 0:                                  // rows
+          Sub                                    // %M - %rm (the + 0 for slt is folded away)
+            Leaf %arg3                           // %M
+            Leaf %2                              // %rm
+        axis 1:                                  // cols
+          Const 1                                // size-1 axis, all on
+    }
+    Box rank=2                                   // box of %mask_11 (8x16)
+      axis 0:                                    // rows
+        Sub                                      // %M - %rm, unchanged
+          Leaf %arg3                             // %M
+          Leaf %2                                // %rm
+      axis 1:                                    // cols
+        Const 16                                 // 1 -> 16: broadcast axis, AtLeastOne(1, 16) folded to 16
+  }
+  analyzeMask depth=1 {                          // rhs: %mask_12
+    is BroadcastOp                               // %mask_12 = tt.broadcast %mask_10 : tensor<1x16xi1> -> tensor<8x16xi1>
+    analyzeMask depth=2 {                        // %mask_10
+      is CmpIOp slt                              // %mask_10 = arith.cmpi slt, %mask_8, %mask_9 : tensor<1x16xi32>
+      analyzeInt depth=3 {                       // range side: %mask_8
+        is ExpandDimsOp                          // %mask_8 = tt.expand_dims %rn_5 {axis = 0} : tensor<16xi32> -> tensor<1x16xi32>
+        analyzeInt depth=4 {                     // %rn_5
+          is AddIOp                              // %rn_5 = arith.addi %rn_4, %rn_3 : tensor<16xi32>
+          analyzeInt depth=5 {                   // %rn_4
+            is SplatOp                           // %rn_4 = tt.splat %rn : i32 -> tensor<16xi32>
+            IntInfo Splat                        // every element is %rn
+              Leaf %6                            // %6 = %rn = arith.muli %pid_n, %c16_i32
+          }
+          analyzeInt depth=5 {                   // %rn_3
+            is MakeRangeOp                       // %rn_3 = tt.make_range {start = 0, end = 16} : tensor<16xi32>
+            IntInfo Range axis=0 (scalar + i_0)  // %rn_3[j] = 0 + j
+              Const 0                            // start = 0
+          }
+          IntInfo Range axis=0 (scalar + i_0)    // %rn_5[j] = %rn + j
+            Leaf %6                              // %rn
+        }
+        IntInfo Range axis=1 (scalar + i_1)      // %mask_8[0][j] = %rn + j (new axis 0 is in front, so axis 0 -> 1)
+          Leaf %6                                // %rn
+      }
+      analyzeInt depth=3 {                       // bound side: %mask_9
+        is SplatOp                               // %mask_9 = tt.splat %N : i32 -> tensor<1x16xi32>
+        IntInfo Splat                            // every element is %N
+          Leaf %arg4                             // %arg4 = %N
+      }
+      Box rank=2                                 // box of %mask_10 (1x16): %rn + j < %N  <=>  j < %N - %rn
+        axis 0:                                  // rows
+          Const 1                                // size-1 axis, all on
+        axis 1:                                  // cols
+          Sub                                    // %N - %rn
+            Leaf %arg4                           // %N
+            Leaf %6                              // %rn
+    }
+    Box rank=2                                   // box of %mask_12 (8x16)
+      axis 0:                                    // rows
+        Const 8                                  // 1 -> 8: broadcast axis, AtLeastOne(1, 8) folded to 8
+      axis 1:                                    // cols
+        Sub                                      // %N - %rn, unchanged
+          Leaf %arg4                             // %N
+          Leaf %6                                // %rn
+  }
+  Box rank=2                                     // box of %mask_13 = lhs AND rhs: per-axis min, a full axis drops out
+    axis 0:                                      // rows
+      Sub                                        // min(%M - %rm, 8) = %M - %rm
+        Leaf %arg3                               // %M
+        Leaf %2                                  // %rm
+    axis 1:                                      // cols
+      Sub                                        // min(16, %N - %rn) = %N - %rn
+        Leaf %arg4                               // %N
+        Leaf %6                                  // %rn
+}

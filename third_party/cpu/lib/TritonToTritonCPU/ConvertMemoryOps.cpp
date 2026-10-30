@@ -13,6 +13,7 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/Support/Debug.h"
 
 #include "cpu/include/Dialect/TritonCPU/IR/Dialect.h"
 #include "triton/Analysis/Allocation.h"
@@ -21,6 +22,8 @@
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include "cpu/include/ScalarizePass/ScalarizeInterface.h"
+
+#define DEBUG_TYPE "convert-memory-ops"
 
 namespace mlir {
 namespace triton {
@@ -37,6 +40,20 @@ using namespace mlir::triton::cpu;
 
 namespace {
 
+// Printing flags for the debug dump: name SSA values after their NameLoc
+// (%a_16, %rm_7, ...), like the TRITON_KERNEL_DUMP files, instead of %0, %1.
+OpPrintingFlags debugPrintingFlags() {
+  return OpPrintingFlags().printNameLocAsPrefix(true);
+}
+
+// Debug dump of one op, `prefix` then the op on one line.
+LLVM_ATTRIBUTE_UNUSED void printOpLine(StringRef prefix, Operation *op,
+                                       unsigned indent = 0) {
+  llvm::dbgs().indent(indent) << prefix;
+  op->print(llvm::dbgs(), debugPrintingFlags());
+  llvm::dbgs() << "\n";
+}
+
 // Mask of the row at `rowIndices` (indices of all dims but the last) of an
 // n-D memory op whose mask is a triton_cpu.tail_mask (see AnalyzeTailMasks),
 // built from the bounds instead of extracted from the n-D mask:
@@ -48,13 +65,31 @@ namespace {
 static Value getTailRowMask(Value mask, Value convertedMask,
                             ArrayRef<int64_t> shape,
                             ArrayRef<int64_t> rowIndices, Location loc,
-                            ConversionPatternRewriter &rewriter) {
+                            ConversionPatternRewriter &rewriter);
+
+// The body of getTailRowMask; getTailRowMask wraps it with the debug dump.
+static Value getTailRowMaskImpl(Value mask, Value convertedMask,
+                                ArrayRef<int64_t> shape,
+                                ArrayRef<int64_t> rowIndices, Location loc,
+                                ConversionPatternRewriter &rewriter) {
+  // Under -debug-only=convert-memory-ops: which case is taken, inside the
+  // getTailRowMask block.
+  auto note = [&](const Twine &what) {
+    (void)what;
+    LLVM_DEBUG(llvm::dbgs().indent(6) << what << "\n");
+  };
   auto tailMask = mask ? mask.getDefiningOp<triton::cpu::TailMaskOp>() : nullptr;
   if (!tailMask)
     return nullptr;
+  LLVM_DEBUG({
+    llvm::dbgs().indent(6) << "is TailMaskOp: ";
+    tailMask->print(llvm::dbgs(), debugPrintingFlags());
+    llvm::dbgs() << "\n";
+  });
   auto rowMaskTy = VectorType::get(shape.back(), rewriter.getI1Type());
   if (llvm::all_of(shape.drop_back(), [](int64_t d) { return d == 1; }))
     return vector::ShapeCastOp::create(rewriter, loc, rowMaskTy, convertedMask);
+  note("row mask = create_mask(row inside the leading bounds ? last bound : 0)");
 
   auto bounds = tailMask.getBounds();
   auto i32Ty = rewriter.getI32Type();
@@ -64,14 +99,52 @@ static Value getTailRowMask(Value mask, Value convertedMask,
     Value inside = arith::CmpIOp::create(
         rewriter, loc, arith::CmpIPredicate::sgt, bound, idxVal);
     rowOn = arith::AndIOp::create(rewriter, loc, rowOn, inside);
+    LLVM_DEBUG({
+      llvm::dbgs().indent(6) << "row on if ";
+      bound.printAsOperand(llvm::dbgs(), debugPrintingFlags());
+      llvm::dbgs() << " > " << idx << "\n";
+    });
   }
   Value zero = arith::ConstantIntOp::create(rewriter, loc, i32Ty, 0);
   Value len =
       arith::SelectOp::create(rewriter, loc, rowOn, bounds.back(), zero);
   Value lenIdx = arith::IndexCastOp::create(rewriter, loc,
                                             rewriter.getIndexType(), len);
+  LLVM_DEBUG({
+    llvm::dbgs().indent(6) << "len = row on ? ";
+    bounds.back().printAsOperand(llvm::dbgs(), debugPrintingFlags());
+    llvm::dbgs() << " : 0\n";
+  });
   return vector::CreateMaskOp::create(rewriter, loc, rowMaskTy,
                                       ValueRange{lenIdx});
+}
+
+// Under -debug-only=convert-memory-ops, each call is dumped as a block with
+// the row it builds the mask for, the case taken and the mask built:
+//     getTailRowMask row=[1] {
+//       is TailMaskOp: %a_21 = triton_cpu.tail_mask %a_19, %a_20 : tensor<8x16xi1>
+//       row mask = create_mask(row inside the leading bounds ? last bound : 0)
+//       row on if %a_19 > 1
+//       len = row on ? %a_20 : 0
+//       built: %a_26 = vector.create_mask %a_25 : vector<16xi1>
+//     }
+static Value getTailRowMask(Value mask, Value convertedMask,
+                            ArrayRef<int64_t> shape,
+                            ArrayRef<int64_t> rowIndices, Location loc,
+                            ConversionPatternRewriter &rewriter) {
+  LLVM_DEBUG({
+    llvm::dbgs().indent(4) << "getTailRowMask row=[";
+    llvm::interleaveComma(rowIndices, llvm::dbgs());
+    llvm::dbgs() << "] {\n";
+  });
+  Value res = getTailRowMaskImpl(mask, convertedMask, shape, rowIndices, loc,
+                                 rewriter);
+  LLVM_DEBUG({
+    if (Operation *def = res ? res.getDefiningOp() : nullptr)
+      printOpLine("built: ", def, 6);
+    llvm::dbgs().indent(4) << "}\n";
+  });
+  return res;
 }
 
 template <typename OpT>
@@ -197,9 +270,14 @@ struct LoadOpConversion : public MemoryOpConversion<triton::LoadOp> {
   LogicalResult
   matchAndRewrite(triton::LoadOp loadOp, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    // Under -debug-only=convert-memory-ops: the load, the lowering chosen and
+    // the ops it creates.
+    LLVM_DEBUG(printOpLine("tt.load: ", loadOp));
     auto ptr = loadOp.getPtr();
     auto axisInfo = axisAnalysis.getAxisInfo(ptr);
     if (isContiguousRowMajorAccess(axisInfo, loadOp)) {
+      LLVM_DEBUG(llvm::dbgs().indent(2) << "contiguous row-major: one "
+                                           "vector load per row\n");
       return lowerToContiguousRowMajor(loadOp, rewriter);
     }
     if (useGatherScatter && succeeded(lowerToGather(loadOp, rewriter))) {
@@ -254,6 +332,13 @@ struct LoadOpConversion : public MemoryOpConversion<triton::LoadOp> {
       } else {
         vec = vector::LoadOp::create(rewriter, loc, subVecTy, memRef, zeroIdx);
       }
+      LLVM_DEBUG({
+        llvm::dbgs().indent(2) << "row [";
+        llvm::interleaveComma(subIndices, llvm::dbgs());
+        llvm::dbgs() << "]: ";
+        vec.getDefiningOp()->print(llvm::dbgs(), debugPrintingFlags());
+        llvm::dbgs() << "\n";
+      });
 
       if (shape.size() > 1) {
         res = vector::InsertOp::create(rewriter, loc, vec, res, subIndices);
@@ -365,9 +450,14 @@ struct StoreOpConversion : public MemoryOpConversion<triton::StoreOp> {
   LogicalResult
   matchAndRewrite(triton::StoreOp storeOp, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
+    // Under -debug-only=convert-memory-ops: the store, the lowering chosen
+    // and the ops it creates.
+    LLVM_DEBUG(printOpLine("tt.store: ", storeOp));
     auto ptr = storeOp.getPtr();
     auto axisInfo = axisAnalysis.getAxisInfo(ptr);
     if (isContiguousRowMajorAccess(axisInfo, storeOp)) {
+      LLVM_DEBUG(llvm::dbgs().indent(2) << "contiguous row-major: one "
+                                           "vector store per row\n");
       return lowerToContiguousRowMajor(storeOp, rewriter);
     }
     if (useGatherScatter && succeeded(lowerToScatter(storeOp, rewriter))) {
@@ -412,8 +502,15 @@ struct StoreOpConversion : public MemoryOpConversion<triton::StoreOp> {
           if (!subMask)
             subMask = vector::ExtractOp::create(rewriter, loc, mask, indices);
         }
-        vector::MaskedStoreOp::create(rewriter, loc, memRef, zeroIdx, subMask,
-                                      val);
+        auto st = vector::MaskedStoreOp::create(rewriter, loc, memRef, zeroIdx,
+                                                subMask, val);
+        LLVM_DEBUG({
+          llvm::dbgs().indent(2) << "row [";
+          llvm::interleaveComma(indices, llvm::dbgs());
+          llvm::dbgs() << "]: ";
+          st->print(llvm::dbgs(), debugPrintingFlags());
+          llvm::dbgs() << "\n";
+        });
       } else {
         vector::StoreOp::create(rewriter, loc, val, memRef, zeroIdx);
       }

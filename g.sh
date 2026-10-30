@@ -33,15 +33,18 @@ export TRITON_LOCAL_LIBOMP_PATH=$HOME/.triton-native-libomp
 export OMP_NUM_THREADS=8
 export TRITON_RISCV_LMUL=8
 export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
+# -debug-only for the MLIR passes (comma-separated).
+#export TRITON_LLVM_DEBUG_ONLY="analyze-tail-masks,tail-mask-to-evl,convert-memory-ops"
+export TRITON_LLVM_DEBUG_ONLY=""
 
 cd python/tutorials/cpu
-KERNEL=reshape
+KERNEL=mask2d
 export TRITON_ALWAYS_COMPILE=1
 export TRITON_KERNEL_DUMP=1
 export TRITON_DUMP_DIR=artifacts/dump/$KERNEL
 export TRITON_CPU_BACKEND=1
 #export TRITON_CPU_FLIP_TO_SHUFFLE=1
-#export TRITON_VSETVL_MINE=1
+export TRITON_VSETVL_MINE=1
 #python python/tutorials/cpu/rvv_03-matrix-multiplication_elf.py
 python rvv_"$KERNEL"_elf.py
 

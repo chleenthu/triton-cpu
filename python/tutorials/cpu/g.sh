@@ -7,9 +7,11 @@ source .venv/bin/activate
 export TRITON_EXT_ENABLED=1
 # Always build with the project's clang (never gcc). It has no default target
 # triple, so give CMake's compiler check an explicit host target. Link with lld
-# and compile through ccache (picked up from PATH).
-export CC=$HOME/llvm-project/install/bin/clang
-export CXX=$HOME/llvm-project/install/bin/clang++
+# and compile through ccache (picked up from PATH). Build with the Release clang
+# (install-rel): the Debug one in install takes ~130 s per MLIR source file. Triton
+# still links against the Debug LLVM/MLIR in $LLVM_BUILD_DIR.
+export CC=$HOME/llvm-project/install-rel/bin/clang
+export CXX=$HOME/llvm-project/install-rel/bin/clang++
 export CFLAGS="--target=x86_64-unknown-linux-gnu"
 export CXXFLAGS="--target=x86_64-unknown-linux-gnu"
 export LDFLAGS="-fuse-ld=lld"
@@ -18,7 +20,7 @@ export PATH=$HOME/ccache/install/bin:$PATH
 #  LLVM_INCLUDE_DIRS=$LLVM_BUILD_DIR/include \
 #  LLVM_LIBRARY_DIR=$LLVM_BUILD_DIR/lib \
 #  LLVM_SYSPATH=$LLVM_BUILD_DIR \
-#  pip install -vvv -e .
+#  pip install --no-build-isolation -vvv -e .
 # Faster incremental C++ rebuild (after the first full pip build):
 ninja -C build/cmake.linux-x86_64-cpython-3.10 libtriton.so
 
@@ -33,15 +35,16 @@ export TRITON_LOCAL_LIBOMP_PATH=$HOME/.triton-native-libomp
 export OMP_NUM_THREADS=8
 export TRITON_RISCV_LMUL=8
 export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
+export TRITON_LLVM_DEBUG_ONLY="analyze-tail-masks"
 
 cd python/tutorials/cpu
-KERNEL=gluon
+KERNEL=mask2d
 export TRITON_ALWAYS_COMPILE=1
 export TRITON_KERNEL_DUMP=1
 export TRITON_DUMP_DIR=artifacts/dump/$KERNEL
 export TRITON_CPU_BACKEND=1
 #export TRITON_CPU_FLIP_TO_SHUFFLE=1
-#export TRITON_VSETVL_MINE=1
+export TRITON_VSETVL_MINE=1
 #python python/tutorials/cpu/rvv_03-matrix-multiplication_elf.py
 python rvv_"$KERNEL"_elf.py
 

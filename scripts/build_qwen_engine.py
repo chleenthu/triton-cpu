@@ -36,6 +36,15 @@ Phase C (scripts/gen_qwen_driver.py, separate process): consumes the manifest th
 script writes and emits+builds driver.c.
 """
 import os
+
+# Skip the (slow) capture if a previous run already produced both manifests; set
+# QWEN_REBUILD=1 to force a rebuild. Checked before the heavy imports below.
+_engine_dir = os.path.join(os.environ["HOME"], "qwen_triton_engine")
+if os.environ.get("QWEN_REBUILD") != "1" and all(
+        os.path.exists(os.path.join(_engine_dir, f)) for f in ("manifest.pkl", "kernel_manifest.pkl")):
+    print(f"{_engine_dir} already has manifest.pkl + kernel_manifest.pkl, skipping build (QWEN_REBUILD=1 to force)")
+    raise SystemExit(0)
+
 os.environ["TRITON_DEFAULT_BACKEND"] = "cpu"
 os.environ["TRITON_CPU_TARGET"] = "native"
 import triton
@@ -172,6 +181,23 @@ token_ids = [input_ids.tolist()[0]]
 positions = [L]
 
 with torch.no_grad():
+    # Warm-up (not captured): the first call for each static shape triggers Inductor
+    # compilation, whose CachingAutotuner benchmarks every candidate config by launching
+    # it many times through CPULauncher. Those benchmark launches must not be recorded,
+    # so compile both the prefill and decode graphs first, then reset the StaticCache
+    # (zeroed in place -- buffer addresses are preserved) and capture the real runs.
+    # reset() leaves layers[*].is_initialized == True, while the very first prefill is
+    # traced with it False; dynamo guards on that flag, so a prefill after reset() is a
+    # different graph. Warm up that post-reset prefill too, or it would be compiled (and
+    # its kernels benchmarked) inside the captured pass.
+    model.forward(input_ids=input_ids, cache_position=torch.arange(L), past_key_values=cache, use_cache=True)
+    cache.reset()
+    out = model.forward(input_ids=input_ids, cache_position=torch.arange(L), past_key_values=cache, use_cache=True)
+    warm_id = int(out.logits[:, -1, :].argmax(-1).item())
+    model.forward(input_ids=torch.tensor([[warm_id]], dtype=torch.long), cache_position=torch.tensor([L]),
+                  past_key_values=cache, use_cache=True)
+    cache.reset()
+
     current_calls = []
     out = model.forward(input_ids=input_ids, cache_position=torch.arange(L), past_key_values=cache, use_cache=True)
     prefill_calls = current_calls
@@ -191,7 +217,7 @@ with torch.no_grad():
 
 print(f"prefill: {len(prefill_calls)} launches; decode steps: {[len(c) for c in decode_calls_by_step]}")
 print(f"greedy token ids from host reference run: {token_ids}")
-print(f"decoded continuation: {tokenizer.decode(token_ids[L:])!r}")
+print(f"decoded continuation: {tokenizer.decode(token_ids[1:])!r}")
 
 # ---------------------------------------------------------------------------
 # Classification
@@ -363,7 +389,12 @@ def reconstruct_kernel(src_path, name):
 
 
 kernel_manifest = {}  # kernel_id -> {arg_names, signature, constexprs, src_path, fn_name}
+# captured_srcs also holds kernels loaded only by the warm-up graphs; keep just the
+# ones the captured prefill/decode passes actually launch.
+used_kernel_ids = {c["kernel_id"] for c in prefill_calls + decode0 + decode1}
 for kernel_id, src in captured_srcs.items():
+    if kernel_id not in used_kernel_ids:
+        continue
     fn_name = src.fn.__name__
     src_path = write_kernel_source(kernel_id, src)
     kernel_manifest[kernel_id] = {
