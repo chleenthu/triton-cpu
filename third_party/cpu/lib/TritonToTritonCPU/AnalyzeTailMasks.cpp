@@ -25,10 +25,13 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Pass/Pass.h"
+#include "llvm/Support/Debug.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 #include <memory>
 #include <optional>
+
+#define DEBUG_TYPE "analyze-tail-masks"
 
 namespace mlir {
 namespace triton {
@@ -54,6 +57,55 @@ struct Expr {
   ExprPtr a, b;     // operands (Select: a = then, b = else)
   int64_t size = 0; // AtLeastOne: a >= 1 ? size : 0
 };
+
+const char *kindName(Expr::Kind k) {
+  static constexpr const char *names[] = {
+      "Const", "Leaf", "Add", "Sub", "Min", "Max", "Select", "AtLeastOne"};
+  static_assert(std::size(names) == Expr::AtLeastOne + 1,
+               "kindName out of sync with Expr::Kind");
+  return unsigned(k) < std::size(names) ? names[k] : "<unknown>";
+}
+
+// Printing flags for the debug dump: name SSA values after their NameLoc
+// (%a_16, %rm_7, ...), like the TRITON_KERNEL_DUMP files, instead of %0, %1.
+OpPrintingFlags debugPrintingFlags() {
+  return OpPrintingFlags().printNameLocAsPrefix(true);
+}
+
+// Debug dump of an expression tree, one node per line, children indented:
+//   Sub
+//     Leaf %arg3
+//     Const 128
+LLVM_ATTRIBUTE_UNUSED void printExpr(const ExprPtr &e,
+                                     llvm::raw_ostream &os = llvm::dbgs(),
+                                     unsigned indent = 0) {
+  os.indent(indent);
+  if (!e) {
+    os << "<null>\n";
+    return;
+  }
+  os << kindName(e->kind);
+  switch (e->kind) {
+  case Expr::Const:
+    os << " " << e->cst;
+    break;
+  case Expr::Leaf:
+  case Expr::Select: // leaf holds the i1 condition
+    os << " ";
+    e->leaf.printAsOperand(os, debugPrintingFlags());
+    break;
+  case Expr::AtLeastOne:
+    os << " size=" << e->size;
+    break;
+  default:
+    break;
+  }
+  os << "\n";
+  if (e->a)
+    printExpr(e->a, os, indent + 2);
+  if (e->b)
+    printExpr(e->b, os, indent + 2);
+}
 
 ExprPtr mkConst(int64_t c) {
   auto e = std::make_shared<Expr>();
@@ -132,6 +184,18 @@ struct IntInfo {
   ExprPtr scalar;
 };
 
+LLVM_ATTRIBUTE_UNUSED void printIntInfo(const IntInfo &x,
+                                        llvm::raw_ostream &os = llvm::dbgs(),
+                                        unsigned indent = 0) {
+  os.indent(indent);
+  if (x.isRange)
+    os << "IntInfo Range axis=" << x.axis << " (scalar + i_" << x.axis
+       << ")\n";
+  else
+    os << "IntInfo Splat\n";
+  printExpr(x.scalar, os, indent + 2);
+}
+
 std::optional<SmallVector<int64_t>> getShape(Value v) {
   auto ty = dyn_cast<RankedTensorType>(v.getType());
   if (!ty)
@@ -139,7 +203,16 @@ std::optional<SmallVector<int64_t>> getShape(Value v) {
   return SmallVector<int64_t>(ty.getShape());
 }
 
-std::optional<IntInfo> analyzeInt(Value v, int depth) {
+std::optional<IntInfo> analyzeInt(Value v, int depth);
+
+// The body of analyzeInt; analyzeInt wraps it with the debug dump.
+std::optional<IntInfo> analyzeIntImpl(Value v, int depth) {
+  // Under -debug-only=analyze-tail-masks: which case matched, inside the
+  // analyzeInt block of this depth.
+  auto note = [&](StringRef what) {
+    (void)what;
+    LLVM_DEBUG(llvm::dbgs().indent(2 * depth + 2) << what << "\n");
+  };
   if (depth > kMaxDepth)
     return std::nullopt;
   auto shape = getShape(v);
@@ -148,9 +221,11 @@ std::optional<IntInfo> analyzeInt(Value v, int depth) {
 
   DenseIntElementsAttr dense;
   if (matchPattern(v, m_Constant(&dense))) {
-    if (dense.isSplat())
+    note("is dense constant");
+    if (dense.isSplat()) {
       return IntInfo{false, 0,
                      mkConst(dense.getSplatValue<APInt>().getSExtValue())};
+    }
     // A step-1 progression along exactly one axis.
     SmallVector<int64_t> vals;
     for (const APInt &x : dense.getValues<APInt>())
@@ -171,21 +246,26 @@ std::optional<IntInfo> analyzeInt(Value v, int depth) {
   Operation *def = v.getDefiningOp();
   if (!def)
     return std::nullopt;
-  if (auto range = dyn_cast<MakeRangeOp>(def))
+  if (auto range = dyn_cast<MakeRangeOp>(def)) {
+    note("is MakeRangeOp");
     return IntInfo{true, 0, mkConst(range.getStart())};
+  }
   if (auto splat = dyn_cast<SplatOp>(def)) {
+    note("is SplatOp");
     Value src = splat.getSrc();
     if (!src.getType().isInteger(32))
       return std::nullopt;
     return IntInfo{false, 0, mkLeaf(src)};
   }
   if (auto expand = dyn_cast<ExpandDimsOp>(def)) {
+    note("is ExpandDimsOp");
     auto src = analyzeInt(expand.getSrc(), depth + 1);
     if (src && src->isRange && src->axis >= (int64_t)expand.getAxis())
       ++src->axis;
     return src;
   }
   if (auto bc = dyn_cast<BroadcastOp>(def)) {
+    note("is BroadcastOp");
     auto src = analyzeInt(bc.getSrc(), depth + 1);
     // A size-1 axis holds a single value: the broadcast result is a splat
     // along it.
@@ -195,6 +275,7 @@ std::optional<IntInfo> analyzeInt(Value v, int depth) {
     return src;
   }
   if (auto trans = dyn_cast<TransOp>(def)) {
+    note("is TransOp");
     auto src = analyzeInt(trans.getSrc(), depth + 1);
     if (src && src->isRange) {
       ArrayRef<int32_t> order = trans.getOrder();
@@ -204,6 +285,7 @@ std::optional<IntInfo> analyzeInt(Value v, int depth) {
     return src;
   }
   if (isa<arith::AddIOp, arith::SubIOp>(def)) {
+    note(isa<arith::SubIOp>(def) ? "is SubIOp" : "is AddIOp");
     auto lhs = analyzeInt(def->getOperand(0), depth + 1);
     auto rhs = lhs ? analyzeInt(def->getOperand(1), depth + 1) : std::nullopt;
     if (!rhs)
@@ -220,6 +302,31 @@ std::optional<IntInfo> analyzeInt(Value v, int depth) {
   return std::nullopt;
 }
 
+// Under -debug-only=analyze-tail-masks, each call is dumped as a block nested
+// by depth, with the case that matched, the calls it makes and its result:
+//   analyzeInt depth=3 {
+//     is ExpandDimsOp
+//     analyzeInt depth=4 {
+//       ...
+//     }
+//     IntInfo Range axis=1 (scalar + i_1)
+//       Leaf %6
+//   }
+std::optional<IntInfo> analyzeInt(Value v, int depth) {
+  unsigned indent = 2 * depth;
+  LLVM_DEBUG(llvm::dbgs().indent(indent)
+             << "analyzeInt depth=" << depth << " {\n");
+  std::optional<IntInfo> res = analyzeIntImpl(v, depth);
+  LLVM_DEBUG({
+    if (res)
+      printIntInfo(*res, llvm::dbgs(), indent + 2);
+    else
+      llvm::dbgs().indent(indent + 2) << "failed\n";
+    llvm::dbgs().indent(indent) << "}\n";
+  });
+  return res;
+}
+
 using Box = SmallVector<ExprPtr>;
 
 Box fullBox(ArrayRef<int64_t> shape) {
@@ -229,7 +336,27 @@ Box fullBox(ArrayRef<int64_t> shape) {
   return box;
 }
 
-std::optional<Box> analyzeMask(Value mask, int depth) {
+// Debug dump of a box: one expression tree per axis.
+LLVM_ATTRIBUTE_UNUSED void printBox(const Box &box,
+                                    llvm::raw_ostream &os = llvm::dbgs(),
+                                    unsigned indent = 0) {
+  os.indent(indent) << "Box rank=" << box.size() << "\n";
+  for (auto [d, e] : llvm::enumerate(box)) {
+    os.indent(indent + 2) << "axis " << d << ":\n";
+    printExpr(e, os, indent + 4);
+  }
+}
+
+std::optional<Box> analyzeMask(Value mask, int depth);
+
+// The body of analyzeMask; analyzeMask wraps it with the debug dump.
+std::optional<Box> analyzeMaskImpl(Value mask, int depth) {
+  // Under -debug-only=analyze-tail-masks: which case matched, inside the
+  // analyzeMask block of this depth.
+  auto note = [&](StringRef what) {
+    (void)what;
+    LLVM_DEBUG(llvm::dbgs().indent(2 * depth + 2) << what << "\n");
+  };
   if (depth > kMaxDepth)
     return std::nullopt;
   auto shape = getShape(mask);
@@ -240,6 +367,7 @@ std::optional<Box> analyzeMask(Value mask, int depth) {
 
   DenseIntElementsAttr dense;
   if (matchPattern(mask, m_Constant(&dense))) {
+    note("is dense constant");
     SmallVector<bool> bits(dense.getValues<bool>());
     SmallVector<int64_t> strides(rank, 1);
     for (int64_t d = rank - 2; d >= 0; --d)
@@ -269,12 +397,14 @@ std::optional<Box> analyzeMask(Value mask, int depth) {
     return std::nullopt;
 
   if (auto tm = dyn_cast<triton::cpu::TailMaskOp>(def)) {
+    note("is TailMaskOp");
     Box box;
     for (Value b : tm.getBounds())
       box.push_back(mkLeaf(b));
     return box;
   }
   if (auto splat = dyn_cast<SplatOp>(def)) {
+    note("is SplatOp");
     // One i1 for every element: all on or all off. Turning one axis off
     // turns the whole box off.
     Box box = fullBox(*shape);
@@ -282,12 +412,14 @@ std::optional<Box> analyzeMask(Value mask, int depth) {
     return box;
   }
   if (auto expand = dyn_cast<ExpandDimsOp>(def)) {
+    note("is ExpandDimsOp");
     auto src = analyzeMask(expand.getSrc(), depth + 1);
     if (src)
       src->insert(src->begin() + expand.getAxis(), mkConst(1));
     return src;
   }
   if (auto bc = dyn_cast<BroadcastOp>(def)) {
+    note("is BroadcastOp");
     auto src = analyzeMask(bc.getSrc(), depth + 1);
     if (!src)
       return std::nullopt;
@@ -298,6 +430,7 @@ std::optional<Box> analyzeMask(Value mask, int depth) {
     return src;
   }
   if (auto trans = dyn_cast<TransOp>(def)) {
+    note("is TransOp");
     auto src = analyzeMask(trans.getSrc(), depth + 1);
     if (!src)
       return std::nullopt;
@@ -307,6 +440,7 @@ std::optional<Box> analyzeMask(Value mask, int depth) {
     return box;
   }
   if (isa<arith::AndIOp, arith::OrIOp>(def)) {
+    note(isa<arith::AndIOp>(def) ? "is AndIOp" : "is OrIOp");
     auto lhs = analyzeMask(def->getOperand(0), depth + 1);
     auto rhs = lhs ? analyzeMask(def->getOperand(1), depth + 1) : std::nullopt;
     if (!rhs)
@@ -346,6 +480,8 @@ std::optional<Box> analyzeMask(Value mask, int depth) {
     return box;
   }
   if (auto cmp = dyn_cast<arith::CmpIOp>(def)) {
+    note(("is CmpIOp " + arith::stringifyCmpIPredicate(cmp.getPredicate()))
+             .str());
     // range + off <  n   <=>  i_axis < n - off
     // range + off <= n   <=>  i_axis < n - off + 1
     // (and the mirrored sgt / sge). Signed only: an unsigned compare stops
@@ -383,6 +519,36 @@ std::optional<Box> analyzeMask(Value mask, int depth) {
     return box;
   }
   return std::nullopt;
+}
+
+// Under -debug-only=analyze-tail-masks, each call is dumped as a block nested
+// by depth, like analyzeInt, with the box it found:
+//   analyzeMask depth=0 {
+//     is AndIOp
+//     analyzeMask depth=1 {
+//       ...
+//     }
+//     Box rank=2
+//       axis 0:
+//         Sub
+//           Leaf %arg3
+//           Leaf %2
+//       axis 1:
+//         ...
+//   }
+std::optional<Box> analyzeMask(Value mask, int depth) {
+  unsigned indent = 2 * depth;
+  LLVM_DEBUG(llvm::dbgs().indent(indent)
+             << "analyzeMask depth=" << depth << " {\n");
+  std::optional<Box> res = analyzeMaskImpl(mask, depth);
+  LLVM_DEBUG({
+    if (res)
+      printBox(*res, llvm::dbgs(), indent + 2);
+    else
+      llvm::dbgs().indent(indent + 2) << "failed\n";
+    llvm::dbgs().indent(indent) << "}\n";
+  });
+  return res;
 }
 
 Value materialize(OpBuilder &b, Location loc, const ExprPtr &e) {

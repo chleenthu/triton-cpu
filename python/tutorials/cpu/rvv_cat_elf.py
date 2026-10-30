@@ -8,8 +8,10 @@ One kernel that keeps a live across a tl.cat, used to see what a concatenation l
 cat_live -- each program loads BLOCK_SIZE int32 values a and b, and concatenates them,
             y = tl.cat(a, b, can_reorder=True), so y[i] = a[i] and y[BLOCK_SIZE + i] = b[i]. Then two
             products of y with loaded weights are stored, and only then a is used again:
-            out2 = a - b. a is the low part of y, so it could be rebuilt as y itself read at the
-            narrower VL (or b as vslidedown y, BLOCK_SIZE).
+            out2 = a - b. a is the low part of y: -custom-reverse kills a after the concatenation and
+            rebuilds it as a copy of y's low sub-register (ReverseRemat[low-of-concat]), max VP
+            40 -> 32. b could be rebuilt as vslidedown y, BLOCK_SIZE (ReverseRemat[slidedown-of-concat]),
+            but y's last use comes right after b's, so b would be free for too short a stretch.
 
 All sizes are exact multiples of the tile sizes, so no masks are involved.
 """
