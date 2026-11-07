@@ -1,6 +1,8 @@
 #include "cpu/include/TritonCPUTransforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Matchers.h"
@@ -652,10 +654,41 @@ bool isLaneWise(Operation *op, int64_t n) {
   });
 }
 
+// Whether a 1-D vector.extract reads only lanes < `len`: a constant position
+// p with p + 1 <= len, or the induction variable of an scf.for that starts at
+// a constant >= 0, steps by a constant > 0 and whose upper bound has size
+// <= len (iv < ub <= len). The second form is the tail-masked histogram loop
+// from ConvertHistogramOp, `scf.for i in [0, min(L, n))`.
+bool extractWithin(vector::ExtractOp extract, const TailLen &len, int64_t n) {
+  if (extract.getSourceVectorType().getRank() != 1)
+    return false;
+  SmallVector<OpFoldResult> pos = extract.getMixedPosition();
+  if (pos.size() != 1)
+    return false;
+  if (std::optional<int64_t> cst = getConstantIntValue(pos[0])) {
+    auto bound = makeLen(TailLen::Const);
+    bound->cst = *cst + 1;
+    return *cst >= 0 && provablyLE(*bound, len);
+  }
+  auto iv = dyn_cast<BlockArgument>(cast<Value>(pos[0]));
+  if (!iv)
+    return false;
+  auto loop = dyn_cast<scf::ForOp>(iv.getOwner()->getParentOp());
+  if (!loop || loop.getInductionVar() != iv)
+    return false;
+  std::optional<int64_t> lb = getConstantIntValue(loop.getLowerBound());
+  std::optional<int64_t> step = getConstantIntValue(loop.getStep());
+  if (!lb || *lb < 0 || !step || *step <= 0)
+    return false;
+  TailLenPtr ub = analyzeScalarLength(loop.getUpperBound(), n, 0);
+  return ub && provablyLE(*ub, len);
+}
+
 // Whether no lane >= `len` of `v` can affect the program: every path through
 // lane-wise ops ends in an arith.select that picks `v` only where its
 // condition (size <= len) is on, in a vector.maskedstore of `v` whose mask
-// has size <= len, or in a masked vector.reduction whose mask has size <= len.
+// has size <= len, in a masked vector.reduction whose mask has size <= len,
+// or in a vector.extract of a lane < len (extractWithin).
 bool tailLanesUnused(Value v, const TailLen &len, int64_t n,
                      llvm::SmallPtrSetImpl<Value> &visited, int depth = 0) {
   if (depth > 64)
@@ -677,6 +710,11 @@ bool tailLanesUnused(Value v, const TailLen &len, int64_t n,
       auto maskOp = dyn_cast<vector::MaskOp>(red->getParentOp());
       if (maskOp && use.get() == red.getVector() &&
           maskWithin(maskOp.getMask(), len))
+        continue;
+      return false;
+    }
+    if (auto extract = dyn_cast<vector::ExtractOp>(user)) {
+      if (extractWithin(extract, len, n))
         continue;
       return false;
     }

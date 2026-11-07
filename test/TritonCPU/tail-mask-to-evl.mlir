@@ -154,3 +154,74 @@ module {
     tt.return %s : f32
   }
 }
+
+// -----
+
+// Tail-masked histogram (ConvertHistogramOp): the loaded vector is only read
+// by vector.extract inside scf.for i in [0, min(L, 16)), so lanes >= L are
+// never read and the load gets a poison pass-through. %v1 is also read at a
+// constant position 3 < 4 = L1, so it qualifies too.
+// CHECK-LABEL: @histogram_extract
+// CHECK-DAG:   %[[POISON:.+]] = ub.poison : vector<16xi32>
+// CHECK:       vector.maskedload %{{.+}}[%{{.+}}], %{{.+}}, %[[POISON]]
+// CHECK:       vector.maskedload %{{.+}}[%{{.+}}], %{{.+}}, %[[POISON]]
+
+module {
+  tt.func public @histogram_extract(%arg0: !tt.ptr<i32>, %arg1: index) -> (i32, i32) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %zero = arith.constant 0 : i32
+    %pass = arith.constant dense<0> : vector<16xi32>
+    %m = vector.create_mask %arg1 : vector<16xi1>
+    %src = triton_cpu.ptr_to_memref %arg0 : <i32> -> memref<16xi32>
+    %v = vector.maskedload %src[%c0], %m, %pass : memref<16xi32>, vector<16xi1>, vector<16xi32> into vector<16xi32>
+    %ub = arith.minsi %arg1, %c16 : index
+    %s = scf.for %i = %c0 to %ub step %c1 iter_args(%acc = %zero) -> (i32) {
+      %e = vector.extract %v[%i] : i32 from vector<16xi32>
+      %a = arith.addi %acc, %e : i32
+      scf.yield %a : i32
+    }
+    %m1 = vector.constant_mask [4] : vector<16xi1>
+    %v1 = vector.maskedload %src[%c0], %m1, %pass : memref<16xi32>, vector<16xi1>, vector<16xi32> into vector<16xi32>
+    %e1 = vector.extract %v1[3] : i32 from vector<16xi32>
+    tt.return %s, %e1 : i32, i32
+  }
+}
+
+// -----
+
+// Extracts that may read lanes >= L keep the pass-through: a constant
+// position 4 with L = 4, a loop over all 16 lanes, and a loop starting at -1.
+// CHECK-LABEL: @histogram_extract_out_of_tail
+// CHECK-NOT:   ub.poison
+
+module {
+  tt.func public @histogram_extract_out_of_tail(%arg0: !tt.ptr<i32>, %arg1: index) -> (i32, i32, i32) {
+    %cm1 = arith.constant -1 : index
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %zero = arith.constant 0 : i32
+    %pass = arith.constant dense<0> : vector<16xi32>
+    %src = triton_cpu.ptr_to_memref %arg0 : <i32> -> memref<16xi32>
+    %m1 = vector.constant_mask [4] : vector<16xi1>
+    %v1 = vector.maskedload %src[%c0], %m1, %pass : memref<16xi32>, vector<16xi1>, vector<16xi32> into vector<16xi32>
+    %e1 = vector.extract %v1[4] : i32 from vector<16xi32>
+    %m = vector.create_mask %arg1 : vector<16xi1>
+    %v = vector.maskedload %src[%c0], %m, %pass : memref<16xi32>, vector<16xi1>, vector<16xi32> into vector<16xi32>
+    %s = scf.for %i = %c0 to %c16 step %c1 iter_args(%acc = %zero) -> (i32) {
+      %e = vector.extract %v[%i] : i32 from vector<16xi32>
+      %a = arith.addi %acc, %e : i32
+      scf.yield %a : i32
+    }
+    %v2 = vector.maskedload %src[%c0], %m, %pass : memref<16xi32>, vector<16xi1>, vector<16xi32> into vector<16xi32>
+    %ub = arith.minsi %arg1, %c16 : index
+    %s2 = scf.for %i = %cm1 to %ub step %c1 iter_args(%acc = %zero) -> (i32) {
+      %e = vector.extract %v2[%i] : i32 from vector<16xi32>
+      %a = arith.addi %acc, %e : i32
+      scf.yield %a : i32
+    }
+    tt.return %e1, %s, %s2 : i32, i32, i32
+  }
+}
