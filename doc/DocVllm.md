@@ -127,3 +127,98 @@ expected from a different bf16 accumulation order. Accuracy not measured.
     autotune too).
 - Qwen2.5-0.5B has no MoE or mamba layers, so those two were only checked with
   kernel-level tests.
+
+# Simple setup: vLLM + triton-cpu in one venv
+
+Everything runs from `~/triton-cpu/.venv` (torch `2.14.0+cpu`, triton-cpu
+editable). `~/vllm/.venv` is no longer used.
+
+## Environment
+
+- **torch:** `torch/_inductor` and `torch/_dynamo` in the venv are symlinks to
+  `~/pytorch/torch/...` (branch `triton-cpu-2.14.0` at tag `v2.14.0`), so Inductor
+  edits take effect without reinstalling. The originals are kept as
+  `_inductor.orig` / `_dynamo.orig`.
+- **vLLM:** `~/vllm` (main) installed editable for CPU:
+
+  ```bash
+  source ~/triton-cpu/.venv/bin/activate
+  cd ~/vllm && python use_existing_torch.py
+  pip install -r requirements/build/cpu.txt -c constraints.txt --extra-index-url https://download.pytorch.org/whl/cpu
+  pip install -r requirements/cpu.txt       -c constraints.txt --extra-index-url https://download.pytorch.org/whl/cpu
+  CC=<gcc>=12.3> CXX=<g++>=12.3> CFLAGS=-I<inc> CXXFLAGS=-I<inc> LDFLAGS=-L<lib> \
+    VLLM_TARGET_DEVICE=cpu MAX_JOBS=16 pip install -e . --no-build-isolation -c constraints.txt
+  ```
+
+  - `constraints.txt` pins `torch==2.14.0+cpu` and `triton==3.8.0+cpu.git9c1ee479`
+    so pip cannot replace them.
+  - The x86 build needs gcc ≥ 12.3; the system has 11.4, so gcc 13.4 from the
+    conda env `~/.conda/envs/vllm` is used.
+  - That compiler does not search `/usr/include`, so `<inc>` / `<lib>` hold links
+    to only `numa.h`, `numaif.h`, `numacompat1.h`,
+    `x86_64-linux-gnu/python3.10/pyconfig.h` and `libnuma.so`.
+  - The built `_C*.so` need only `GLIBCXX_3.4.21`, so the system libstdc++ works.
+
+## Running `scripts/qwen05b_prefill_seq128.py`
+
+Changes from the GPU version: `inductor_compile_config={"cpu_backend": "triton"}`,
+`dtype="bfloat16"`, no `gpu_memory_utilization`, `--attention-backend` defaults
+to vLLM's CPU choice, and `TRITON_CPU_TARGET=native` is set before any import.
+
+```bash
+cd ~/triton-cpu/scripts
+CC=~/llvm-project/install/bin/clang TRITON_LOCAL_LIBOMP_PATH=$HOME/.triton-native-libomp OMP_NUM_THREADS=8 VLLM_CPU_KVCACHE_SPACE=4 \
+  ../.venv/bin/python qwen05b_prefill_seq128.py
+```
+
+- `CC`: native mode passes clang-only flags (`--target=…`, `-fuse-ld=lld`); with
+  the system gcc the first kernel fails with
+  `gcc: error: unrecognized command-line option '--target=x86_64-unknown-linux-gnu'`.
+- `TRITON_LOCAL_LIBOMP_PATH`: the project clang ships no host `omp.h` / libomp;
+  this points the launcher build at `~/.triton-native-libomp` (as in `g.sh`), and
+  `OMP_NUM_THREADS` sets the launcher's thread count. `TRITON_DISABLE_OPENMP=1`
+  also works, with single-threaded launches.
+- `VLLM_CPU_KVCACHE_SPACE` (GB) replaces `gpu_memory_utilization`.
+
+Result: 128 prompt tokens, 1 generated token. Engine init 484 s, almost all
+triton-cpu kernel compilation; later runs reuse `~/.cache/vllm/torch_compile_cache`.
+
+Without `TRITON_CPU_TARGET=native` the kernels and launcher are built as riscv64
+ELFs, which the x86 process cannot load (`ImportError: …__triton_cpu_launcher.so:
+cannot open shared object file`). triton-cpu's riscv64 target only produces
+binaries; running them needs the board.
+
+## Testing the kernels on the board
+
+1. `scripts/qwen_capture.py` (x86): runs `qwen05b_prefill_seq128.main()` with a
+   wrapped `CPULauncher` and keeps the last launch of every Triton kernel (the real
+   prefill) in `~/qwen_rv/<kernel>/`: `kernel.py`, `meta.pkl` (grid, signature,
+   scalar and constexpr values), `in<i>.bin` (every pointer argument before the
+   launch), `ref<i>.bin` (every `out_ptr*` / `in_out_ptr*` after it).
+2. `scripts/qwen_rv_run.py`: for each kernel, compiles it for riscv64 (default
+   target), writes a small C runner that reads `in<i>.bin`, loops over the grid
+   and writes `out<i>.bin`, builds it with `build_standalone_executable`, then
+   `scp`/`ssh` to `chlee@140.114.78.64:~/qwen_rv/<kernel>/`, runs it, copies the
+   outputs back and compares them with x86 (`rtol = atol = 1e-2`, bf16). Prints
+   PASS + ms per launch (mean of 10) + max error, or the mismatch.
+
+Buffers are passed as files, not C array literals as in `riscv.py`'s
+`generate_runner`, so the 136 M-element embedding table works.
+
+```bash
+cd ~/triton-cpu/scripts
+CC=~/llvm-project/install/bin/clang TRITON_LOCAL_LIBOMP_PATH=$HOME/.triton-native-libomp OMP_NUM_THREADS=8 VLLM_CPU_KVCACHE_SPACE=4 ../.venv/bin/python qwen_capture.py
+CC=~/llvm-project/install/bin/clang ../.venv/bin/python qwen_rv_run.py [kernel ...]
+```
+
+## Kernels: CPU (bf16) vs GPU (`chlee@140.114.78.168:~/serve`, RTX 3060 Ti, fp16, `TRITON_ATTN`)
+
+The GPU Triton cache has 44 entries, **31 unique kernels**; the CPU capture has
+**20**. Shared: vLLM's input-preparation and sampling kernels
+(`_apply_write_kernel`, `_compute_slot_mappings_kernel`, `_gumbel_sample_kernel`, …).
+
+| GPU only | Why |
+|---|---|
+| `kernel_unified_attention`, `reduce_segments`, `reshape_and_cache_kernel_flash` | `TRITON_ATTN`; the CPU platform forces C++ `CPU_ATTN` (`vllm/platforms/cpu.py:172`) |
+| `_topk_topp`, `_temperature`, `_min_p`, `_penalties`, `_bias`, `_bad_words`, `_bincount`, `_ranks`, `_prompt_logprobs_token_ids`, `_apply_grammar_bitmask`, `_topk_log_softmax` | compiled by the GPU worker's `_dummy_sampler_run` warmup (`gpu_worker.py:900`); the CPU worker has none, and the real run (`temperature=0`) never launches them. The GPU list counts compiled kernels, the CPU capture counts launched ones. |
+| 8 Inductor kernels (`fused_add_rms_norm_*`, `mul_silu_slice_1`, RoPE `add_cat_index_select_…_1..4`, `embedding_rms_norm_0`) | same jobs as the 11 CPU Inductor kernels (`…_onednn_mm_pow_rsqrt_*`, `mul_onednn_mm_silu_slice_4`, RoPE `index_select_…_1/2`); on CPU vLLM's oneDNN linear sits inside the graph, so fusion and names differ |
