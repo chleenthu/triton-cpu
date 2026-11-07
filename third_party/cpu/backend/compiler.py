@@ -248,10 +248,13 @@ class CPUBackend(BaseBackend):
         if 'avx512f' in self.cpu_features:
             cpu.passes.ttcpuir.add_convert_dot_to_fma(pm)
         cpu.passes.ttcpuir.add_convert_dot_generic(pm)
+        if self.cpu_arch in ("aarch64", "arm64") and {"neon", "bf16"} <= self.cpu_features:
+            # Normalize eligible contracts to MMT and lower them to BFMMLA.
+            cpu.passes.ttcpuir.add_convert_vector_contract_to_arm_neon_bfmmla(pm)
         # riscv64: bf16 memory ops are done on i16 (as on x86 without avx512bf16).
         promote_bf16_to_fp32 = (self.cpu_arch == "riscv64" or
                                 (self.cpu_arch == "x86_64" and "avx512bf16" not in self.cpu_features))
-        # We don't have any lowering for mixed precision matmuls, so always use casts for now
+        # Always legalize mixed-precision matmuls left by specialized passes.
         convert_mixed_precision_matmul = True
         # We don't have math lib functions for FP8, FP16, BF16. Promote such operations to FP32.
         promote_lib_math_to_fp32 = True
@@ -270,8 +273,6 @@ class CPUBackend(BaseBackend):
         # pass-through) are the final ones.
         if _vsetvl_enabled():
             cpu.passes.ttcpuir.add_tail_mask_to_evl(pm)
-        if os.getenv("TRITON_CPU_UNROLL_AND_REORDER_ELEMENTWISE_OPS", "0") == "1":
-            cpu.passes.ttcpuir.add_unroll_and_reorder_elementwise_ops(pm, ",".join(self.cpu_features))
         passes.common.add_cse(pm)
         passes.common.add_symbol_dce(pm)
         passes.common.add_canonicalizer(pm)
@@ -292,6 +293,8 @@ class CPUBackend(BaseBackend):
             cpu.passes.ttcpuir.add_ukernels_to_onednn_llvmir(pm)
         if options.get_ukernels() == Ukernels.XSMM:
             cpu.passes.ttcpuir.add_ukernels_to_xsmm_llvmir(pm)
+        if {"sve", "sve2"} & self.cpu_features:
+            cpu.passes.ttcpuir.add_lower_sve(pm)
         cpu.passes.ttcpuir.add_lower_vector_multi_dim(pm)
         cpu.passes.ttcpuir.add_expand_strided_metadata(pm)
         cpu.passes.ttcpuir.add_vector_to_scf(pm, True, 1, False)
@@ -305,11 +308,13 @@ class CPUBackend(BaseBackend):
         cpu.passes.ttcpuir.add_debug_ops_to_llvmir(pm)
 
         vec_lib_requirements = {
-            VecLib.libsleef: {"neon", "sse", "avx"},
+            VecLib.libsleef: {"neon", "sve", "sve2", "sse", "avx"},
             VecLib.libmvec: {"avx512f"},
         }
         if (vec_lib := options.get_vec_lib()) and vec_lib_requirements[vec_lib] & self.cpu_features:
             cpu.passes.ttcpuir.add_math_to_vec_lib(pm, vec_lib, self.cpu_features)
+            # Scalable SLEEF calls introduce loops after the earlier SCF lowering.
+            passes.convert.add_scf_to_cf(pm)
 
         cpu.passes.ttcpuir.add_math_to_llvmir(pm)
         cpu.passes.ttcpuir.add_math_to_libm(pm)
@@ -317,7 +322,7 @@ class CPUBackend(BaseBackend):
         cpu.passes.ttcpuir.add_memref_to_llvmir(pm)
         passes.convert.add_reconcile_unrealized_casts(pm)
         passes.convert.add_arith_to_llvmir(pm)
-        # passes.convert.add_cf_to_llvmir(pm)
+        passes.convert.add_cf_to_llvmir(pm)
         cpu.passes.ttcpuir.add_func_to_llvmir(pm)
         cpu.passes.ttcpuir.add_ub_to_llvmir(pm)
         passes.common.add_canonicalizer(pm)

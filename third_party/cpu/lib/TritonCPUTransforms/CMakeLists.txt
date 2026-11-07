@@ -8,16 +8,21 @@ add_triton_library(TritonCPUTransforms
     Canonicalize.cpp
     ConvertDotProduct.cpp
     ConvertUnsupportedOps.cpp
+    ConvertVectorContractToArmNeonBFMMLA.cpp
     DecomposeFpConversions.cpp
     OptimizeMasks.cpp
     TailMaskToEVL.cpp
-    UnrollAndReorderElementwiseOps.cpp
 
     DEPENDS
     TritonCPUTransformsPassIncGen
 
     LINK_LIBS PUBLIC
     TritonCPUIR
+    MLIRArithDialect
+    MLIRArmNeonDialect
+    MLIRTransforms
+    MLIRVectorDialect
+    MLIRVectorTransforms
 )
 
 if (dnnl_FOUND)

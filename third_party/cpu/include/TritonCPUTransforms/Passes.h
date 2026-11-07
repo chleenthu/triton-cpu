@@ -45,10 +45,9 @@ createConvertDotToAMX(bool convertInt8, bool convertFp16, bool convertBf16);
 std::unique_ptr<OperationPass<ModuleOp>> createConvertDotToFMA();
 std::unique_ptr<OperationPass<ModuleOp>> createConvertDotGeneric();
 std::unique_ptr<OperationPass<ModuleOp>>
-createConvertDotToNanokernel(std::string cpuFeatures = "");
-
+createConvertVectorContractToArmNeonBFMMLA();
 std::unique_ptr<OperationPass<ModuleOp>>
-createUnrollAndReorderElementwiseOps(std::string cpuFeatures = "");
+createConvertDotToNanokernel(std::string cpuFeatures = "");
 
 std::unique_ptr<OperationPass<ModuleOp>> createCanonicalize();
 

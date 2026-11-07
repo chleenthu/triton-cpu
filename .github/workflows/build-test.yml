@@ -57,8 +57,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install Python ${{ env.python-version }}
         id: install-python
@@ -102,12 +100,18 @@ jobs:
           echo "TRITON_DISABLE_OPENMP=${TRITON_DISABLE_OPENMP}"
           echo "TRITON_DEFAULT_BACKEND=${TRITON_DEFAULT_BACKEND}"
 
-          # Skip bfloat16 tests for now
-          # We are generating bfcvt for bfloat16 tests when converting to fp32.
-          # This is only for Clang15, works OK for Clang16
-          # TODO - fix this using driver flags.
+          # Run without xdist so the capability query result is visible in CI logs.
+          python -m pytest -s --tb=short --device cpu \
+            python/test/unit/cpu/test_cpu_features.py
+
+          # Run BF16 dot tests separately below; keep the broad BF16
+          # exclusions for the remaining macOS tests.
           python -m pytest -s -n 3 --device cpu \
             python/test/unit/language/test_core.py -k "not bfloat16"
+          # Collect the full file for CPU allowlist validation, then select BF16
+          # dot cases and run them through Triton's native CPU lowering.
+          TRITON_CPU_UKERNELS_LIB=None python -m pytest -s --tb=short -n 3 --device cpu \
+            python/test/unit/language/test_core.py -k "test_dot and bfloat16"
           python -m pytest -s -n 3 --device cpu \
             python/test/unit/cpu/test_math.py \
             python/test/unit/cpu/test_opt.py \
@@ -115,6 +119,7 @@ jobs:
             python/test/unit/cpu/test_cpu_conversions.py \
             python/test/unit/cpu/test_cpu_flip.py \
             python/test/unit/cpu/test_cpu_subprocess.py \
+            python/test/unit/cpu/test_cpu_utils.py \
             python/test/unit/language/test_annotations.py \
             python/test/unit/language/test_compile_errors.py \
             python/test/unit/language/test_conversions.py \
@@ -151,8 +156,10 @@ jobs:
             python/test/unit/cpu/test_opt.py \
             python/test/unit/cpu/test_cpu_annotations.py \
             python/test/unit/cpu/test_cpu_conversions.py \
+            python/test/unit/cpu/test_cpu_features.py \
             python/test/unit/cpu/test_cpu_flip.py \
             python/test/unit/cpu/test_cpu_subprocess.py \
+            python/test/unit/cpu/test_cpu_utils.py \
             python/test/unit/language/test_annotations.py \
             python/test/unit/language/test_compile_errors.py \
             python/test/unit/language/test_conversions.py \
@@ -193,8 +200,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install Python ${{ env.python-version }}
         uses: actions/setup-python@v5
@@ -245,12 +250,11 @@ jobs:
           DTYPE=float16 python  python/tutorials/cpu/04-blocked-matmul.py
 
           export TRITON_ALWAYS_COMPILE=1 \
-                 TRITON_CPU_UNROLL_AND_REORDER_ELEMENTWISE_OPS=1 \
-                 TRITON_LLVM_DEBUG_ONLY=triton-cpu-dot-conversion,triton-cpu-unroll-and-reorder-elementwise-ops
+                 TRITON_LLVM_DEBUG_ONLY=triton-cpu-dot-conversion
           python python/tutorials/cpu/08-sfc-matmul.py --dtype bfloat16 --target amx
           python python/tutorials/cpu/08-sfc-matmul.py --dtype int8     --target amx
           python python/tutorials/cpu/08-sfc-matmul.py --dtype bfloat16 --target avx512
-          unset TRITON_ALWAYS_COMPILE TRITON_CPU_UNROLL_AND_REORDER_ELEMENTWISE_OPS TRITON_LLVM_DEBUG_ONLY
+          unset TRITON_ALWAYS_COMPILE TRITON_LLVM_DEBUG_ONLY
 
       - name: OneDNN Run python unit tests on GNR
         env:
