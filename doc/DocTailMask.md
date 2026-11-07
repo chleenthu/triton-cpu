@@ -25,10 +25,11 @@ Any of the three variables turns on both AnalyzeTailMasks and TailMaskToEVL (`_v
 
 | Stage | Pass | What happens to tail masks |
 |---|---|---|
-| TTIR → TTCIR, first | `add_analyze_tail_masks` (`compiler.py:195`) | Box-shaped masks of `tt.load`, `tt.store` and tensor `arith.select` become `triton_cpu.tail_mask`. |
+| TTIR → TTCIR, first | `add_analyze_tail_masks` (`compiler.py:195`) | Box-shaped masks of `tt.load`, `tt.store`, `tt.histogram` and tensor `arith.select` become `triton_cpu.tail_mask`. |
 | | `add_scalarize` | A scalarized access computes each element's mask from the bounds (`TailMaskScalarizeInterface`, `ScalarizeInterface.cpp:259`) instead of storing the mask to a temporary buffer. |
 | | `add_convert_memory_ops` | Each row of an n-D access gets its own mask from the bounds (`getTailRowMask`, `ConvertMemoryOps.cpp:48`) instead of a `vector.extract` from the n-D mask. |
 | | `add_convert_elementwise_ops` | `triton_cpu.tail_mask` → `vector.create_mask` with the same bounds (`TailMaskOpConversion`, `ConvertElementwiseOps.cpp:167`). |
+| | `add_convert_histogram_op` | A histogram whose mask is a 1-D `vector.create_mask L` loops `scf.for i in [0, min(L, M))` over the source lanes; a `vector.constant_mask` cuts the unrolled steps at `L`. Any other mask is AND-ed into each step's compare. |
 | | `add_convert_reduction_op` | With `REDUCE`: `mapToMaskedReduction` (`ConvertReductionOp.cpp:210`) needs the `select` condition to be a `vector.create_mask`. |
 | TTCIR, late | `add_tail_mask_to_evl` (`compiler.py:272`) | Runs after `add_decompose_fp_conversions`, so the bf16 → i16 memory rewrite has already produced the final loads. |
 | TTCIR → LLVM | `MemoryOpToLLVM` | `getMaskEVL` (`MemoryOpToLLVM.cpp:117`) takes the EVL from a constant prefix mask, a 1-D `vector.constant_mask` or a 1-D `vector.create_mask`. Any other mask keeps the default masked lowering. |
@@ -45,7 +46,7 @@ Element `(i_0, ..., i_{n-1})` is on iff `i_d < bounds[d]` for every `d`. Bounds 
 
 ## AnalyzeTailMasks (TTIR)
 
-The pass collects the mask operands of `tt.load`, `tt.store` and every `arith.select` with a tensor condition (`AnalyzeTailMasks.cpp:422`). For each one, `analyzeMask` (`AnalyzeTailMasks.cpp:232`) tries to describe the mask as a box: one bound expression `B_d` per dimension. If it succeeds, the bounds are materialized as `i32` scalar ops in front of the user and the operand is replaced with `triton_cpu.tail_mask`. The analysis itself creates no IR, and masks that are already a `tail_mask` are left alone.
+The pass collects the mask operands of `tt.load`, `tt.store`, `tt.histogram` and every `arith.select` with a tensor condition (`AnalyzeTailMasks.cpp:422`). For each one, `analyzeMask` (`AnalyzeTailMasks.cpp:232`) tries to describe the mask as a box: one bound expression `B_d` per dimension. If it succeeds, the bounds are materialized as `i32` scalar ops in front of the user and the operand is replaced with `triton_cpu.tail_mask`. The analysis itself creates no IR, and masks that are already a `tail_mask` are left alone.
 
 Masks it recognizes:
 
@@ -90,6 +91,7 @@ There is no case for `vector.extract`. A mask taken out of an n-D mask by `vecto
 - an `arith.select` that picks the value only where its condition (length `<= L`) is on;
 - a `vector.maskedstore` whose mask has length `<= L`;
 - a `vector.mask { vector.reduction }` whose mask has length `<= L`.
+- a 1-D `vector.extract` that reads only lanes `< L`: a constant position `p` with `p + 1 <= L`, or the induction variable of an `scf.for` that starts at a constant `>= 0`, steps by a constant `> 0` and has an upper bound of length `<= L` (`extractWithin`). This is the tail-masked histogram loop `scf.for i in [0, min(L, M))`.
 
 Test: `test/TritonCPU/tail-mask-to-evl.mlir`.
 

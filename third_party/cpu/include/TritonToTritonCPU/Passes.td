@@ -143,6 +143,7 @@ def ConvertHistogramOp : Pass<"triton-cpu-convert-histogram-op", "mlir::ModuleOp
 
     let dependentDialects = ["mlir::arith::ArithDialect",
                              "mlir::memref::MemRefDialect",
+                             "mlir::scf::SCFDialect",
                              "mlir::vector::VectorDialect"];
 }
 

@@ -3497,6 +3497,37 @@ def test_histogram_out_of_range(device):
     torch.testing.assert_close(z, expected)
 
 
+@pytest.mark.interpreter
+@pytest.mark.parametrize("n_elements", [1000, 1024, 37])
+def test_histogram_tail_mask(n_elements, device):
+    # Tail mask (offs < n) across several programs, the shape AnalyzeTailMasks turns
+    # into triton_cpu.tail_mask, so the CPU backend can stop the histogram at the
+    # tail length. Each program histograms its own block into row pid. Masked-off
+    # lanes load other=0, a value inside the bins, so counting them shows up in bin 0.
+
+    @triton.jit
+    def histogram_kernel(x_ptr, z_ptr, n_elements, BLOCK: tl.constexpr, N: tl.constexpr):
+        pid = tl.program_id(0)
+        offs = pid * BLOCK + tl.arange(0, BLOCK)
+        m = offs < n_elements
+        x = tl.load(x_ptr + offs, mask=m, other=0)
+        z = tl.histogram(x, N, mask=m)
+        tl.store(z_ptr + pid * N + tl.arange(0, N), z)
+
+    BLOCK, N = 64, 16
+    n_prog = triton.cdiv(n_elements, BLOCK)
+    torch.manual_seed(0)
+    x = torch.randint(0, N, (n_elements, ), device=device, dtype=torch.int32)
+    z = torch.empty((n_prog, N), device=device, dtype=torch.int32)
+    histogram_kernel[(n_prog, )](x, z, n_elements, BLOCK=BLOCK, N=N)
+
+    x_cpu = x.cpu()
+    expected = torch.stack([
+        torch.bincount(x_cpu[p * BLOCK:(p + 1) * BLOCK], minlength=N) for p in range(n_prog)
+    ]).to(torch.int32)
+    torch.testing.assert_close(z.cpu(), expected)
+
+
 # ------------------------
 # test histogram with mask
 # ------------------------

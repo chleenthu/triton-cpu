@@ -588,7 +588,7 @@ Value materialize(OpBuilder &b, Location loc, const ExprPtr &e) {
 struct AnalyzeTailMasks
     : public triton::impl::AnalyzeTailMasksBase<AnalyzeTailMasks> {
   void runOnOperation() override {
-    // Mask operands of loads, stores and selects (tl.where).
+    // Mask operands of loads, stores, histograms and selects (tl.where).
     SmallVector<OpOperand *> uses;
     getOperation()->walk([&](Operation *op) {
       if (auto load = dyn_cast<LoadOp>(op)) {
@@ -597,6 +597,9 @@ struct AnalyzeTailMasks
       } else if (auto store = dyn_cast<StoreOp>(op)) {
         if (store.getMask())
           uses.push_back(&store.getMaskMutable()[0]);
+      } else if (auto hist = dyn_cast<HistogramOp>(op)) {
+        if (hist.getMask())
+          uses.push_back(&hist.getMaskMutable()[0]);
       } else if (auto sel = dyn_cast<arith::SelectOp>(op)) {
         if (isa<RankedTensorType>(sel.getCondition().getType()))
           uses.push_back(&sel->getOpOperand(0));

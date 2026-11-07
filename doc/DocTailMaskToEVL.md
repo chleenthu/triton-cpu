@@ -150,8 +150,9 @@ if (auto load = dyn_cast<vector::MaskedLoadOp>(op)) {
    - **`arith.select %cond, %v, …`** where `%cond`'s tail length is provably `<= len`. The select only takes `%v` in lanes it can actually have.
    - **`vector.maskedstore`** of the value with a mask whose length is `<= len`. The bad lanes never reach memory.
    - **A masked `vector.reduction`** (inside `vector.mask %m`) with `%m`'s length `<= len`.
+   - **A `vector.extract` of a lane `< len`**: a constant position below `len`, or the induction variable of an `scf.for` from `>= 0` whose upper bound is `<= len`. ConvertHistogramOp emits such a loop for a tail-masked `tl.histogram`, so `x = tl.load(p, mask=m, other=0)` followed by `tl.histogram(x, N, mask=m)` gets a poison pass-through.
 
-   Any other use, such as an unmasked reduction, a shuffle, or a call, makes it return false.
+   Any other use, such as an unmasked reduction, a shuffle, a call, or an extract that may read a lane `>= len`, makes it return false.
 
    `visited` stops it from walking the same value twice when two paths join back together.
 
