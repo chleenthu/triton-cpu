@@ -1,5 +1,7 @@
 #include "TypeConverter.h"
 
+#include <algorithm>
+
 #include "cpu/include/TritonCPUToLLVM/Passes.h"
 
 #include "mlir/Analysis/DataFlowFramework.h"
@@ -526,6 +528,195 @@ struct VsetvlMaskedStoreOpConversion : public OpConversionPattern<vector::Masked
   }
 };
 
+// TRITON_VSETVL_CHUNK: like TRITON_VSETVL_MINE, but a vector larger than one
+// m8 register group is split into m8-group chunks instead of going through a
+// stack slot. Chunk c (elements [c*K, (c+1)*K), K = elements per m8 group) is
+// moved straight in registers with vsetvli(EVL_c) + vp.load / vp.store, where
+//   EVL_c = clamp(EVL - c*K, 0, K).
+// Chunks with a constant EVL_c of 0 are skipped; the pieces are joined with
+// llvm.vector.insert / split with llvm.vector.extract.
+
+// Elements per m8 register group (at the minimum VLEN).
+static int64_t getM8ChunkElems(VectorType vecTy) {
+  return kMinM8Bits / vecTy.getElementTypeBitWidth();
+}
+
+// EVL of the chunk [start, start + len): clamp(evl - start, 0, len).
+static MaskEVL getChunkEVL(ConversionPatternRewriter &rewriter, Location loc,
+                           const MaskEVL &evl, int64_t start, int64_t len) {
+  if (evl.constant)
+    return MaskEVL{std::clamp<int64_t>(*evl.constant - start, 0, len), Value()};
+  auto i32Ty = rewriter.getI32Type();
+  auto cst = [&](int64_t v) -> Value {
+    return LLVM::ConstantOp::create(rewriter, loc, i32Ty,
+                                    rewriter.getI32IntegerAttr(v));
+  };
+  Value rem = LLVM::SubOp::create(rewriter, loc, evl.value, cst(start));
+  rem = LLVM::SMaxOp::create(rewriter, loc, rem, cst(0));
+  rem = LLVM::SMinOp::create(rewriter, loc, rem, cst(len));
+  return MaskEVL{std::nullopt, rem};
+}
+
+// LLVM's mangling of a fixed vector type, e.g. "v128bf16".
+static std::string getFixedVecMangling(VectorType vecTy) {
+  std::string name;
+  llvm::raw_string_ostream os(name);
+  os << "v" << vecTy.getNumElements() << vecTy.getElementType();
+  return name;
+}
+
+static Value extractChunk(ConversionPatternRewriter &rewriter, Location loc,
+                          Value vec, VectorType vecTy, VectorType chunkTy,
+                          int64_t start) {
+  Value idx = LLVM::ConstantOp::create(rewriter, loc, rewriter.getI64Type(),
+                                       rewriter.getI64IntegerAttr(start));
+  return LLVM::CallIntrinsicOp::create(
+             rewriter, loc, chunkTy,
+             rewriter.getStringAttr("llvm.vector.extract." +
+                                    getFixedVecMangling(chunkTy) + "." +
+                                    getFixedVecMangling(vecTy)),
+             ValueRange({vec, idx}))
+      .getResult(0);
+}
+
+static Value insertChunk(ConversionPatternRewriter &rewriter, Location loc,
+                         Value vec, Value chunk, VectorType vecTy,
+                         VectorType chunkTy, int64_t start) {
+  Value idx = LLVM::ConstantOp::create(rewriter, loc, rewriter.getI64Type(),
+                                       rewriter.getI64IntegerAttr(start));
+  return LLVM::CallIntrinsicOp::create(
+             rewriter, loc, vecTy,
+             rewriter.getStringAttr("llvm.vector.insert." +
+                                    getFixedVecMangling(vecTy) + "." +
+                                    getFixedVecMangling(chunkTy)),
+             ValueRange({vec, chunk, idx}))
+      .getResult(0);
+}
+
+struct ChunkedVsetvlMaskedLoadOpConversion
+    : public OpConversionPattern<vector::MaskedLoadOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(vector::MaskedLoadOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    VectorType vecTy = op.getVectorType();
+    if (vecTy.getRank() != 1 || vecTy.isScalable() ||
+        op.getMemRefType().getRank() != 1 || !getCopyBitWidth(vecTy))
+      return failure();
+    int64_t n = vecTy.getNumElements();
+    int64_t chunk = getM8ChunkElems(vecTy);
+    if (n > chunk && n % chunk != 0)
+      return failure();
+    std::optional<MaskEVL> evl = getMaskEVL(op.getMask(), n, rewriter, loc);
+    if (!evl)
+      return failure();
+
+    Value passThru = adaptor.getPassThru();
+    if (evl->constant == 0) {
+      rewriter.replaceOp(op, passThru);
+      return success();
+    }
+    Type elemTy = getTypeConverter()->convertType(vecTy.getElementType());
+    if (fitsOneM8Group(vecTy)) {
+      rewriter.replaceOp(op, emitVPLoad(rewriter, op, adaptor, elemTy, *evl));
+      return success();
+    }
+
+    auto fullTy = cast<VectorType>(getTypeConverter()->convertType(vecTy));
+    auto chunkTy = VectorType::get({chunk}, elemTy);
+    bool poisonPassThru = op.getPassThru().getDefiningOp<ub::PoisonOp>() != nullptr;
+    Type ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value base = getRank1ElementPtr(rewriter, loc, adaptor.getBase(),
+                                    adaptor.getIndices(), elemTy);
+    Value allTrue = getAllTrueMask(rewriter, loc, chunkTy);
+    Value result = passThru;
+    for (int64_t start = 0; start < n; start += chunk) {
+      MaskEVL ce = getChunkEVL(rewriter, loc, *evl, start, chunk);
+      if (ce.constant == 0)
+        continue; // all lanes keep the pass-through
+      Value ptr = LLVM::GEPOp::create(rewriter, loc, ptrTy, elemTy, base,
+                                      ArrayRef<LLVM::GEPArg>{start});
+      Value evlVal = getEVLValue(rewriter, loc, ce);
+      Value part =
+          LLVM::CallIntrinsicOp::create(
+              rewriter, loc, chunkTy,
+              rewriter.getStringAttr(getVPIntrinsicName("load", chunkTy)),
+              ValueRange({ptr, allTrue, evlVal}))
+              .getResult(0);
+      if (!poisonPassThru && ce.constant != chunk)
+        part = LLVM::CallIntrinsicOp::create(
+                   rewriter, loc, chunkTy,
+                   rewriter.getStringAttr(
+                       getVPIntrinsicName("merge", chunkTy, /*hasPtr=*/false)),
+                   ValueRange({allTrue, part,
+                               extractChunk(rewriter, loc, passThru, fullTy,
+                                            chunkTy, start),
+                               evlVal}))
+                   .getResult(0);
+      result = insertChunk(rewriter, loc, result, part, fullTy, chunkTy, start);
+    }
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+struct ChunkedVsetvlMaskedStoreOpConversion
+    : public OpConversionPattern<vector::MaskedStoreOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(vector::MaskedStoreOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    VectorType vecTy = op.getVectorType();
+    if (vecTy.getRank() != 1 || vecTy.isScalable() ||
+        op.getMemRefType().getRank() != 1 || !getCopyBitWidth(vecTy))
+      return failure();
+    int64_t n = vecTy.getNumElements();
+    int64_t chunk = getM8ChunkElems(vecTy);
+    if (n > chunk && n % chunk != 0)
+      return failure();
+    std::optional<MaskEVL> evl = getMaskEVL(op.getMask(), n, rewriter, loc);
+    if (!evl)
+      return failure();
+
+    if (evl->constant == 0) {
+      rewriter.eraseOp(op);
+      return success();
+    }
+    Type elemTy = getTypeConverter()->convertType(vecTy.getElementType());
+    if (fitsOneM8Group(vecTy)) {
+      emitVPStore(rewriter, op, adaptor, elemTy, *evl);
+      rewriter.eraseOp(op);
+      return success();
+    }
+
+    auto fullTy = cast<VectorType>(getTypeConverter()->convertType(vecTy));
+    auto chunkTy = VectorType::get({chunk}, elemTy);
+    Type ptrTy = LLVM::LLVMPointerType::get(rewriter.getContext());
+    Value base = getRank1ElementPtr(rewriter, loc, adaptor.getBase(),
+                                    adaptor.getIndices(), elemTy);
+    Value allTrue = getAllTrueMask(rewriter, loc, chunkTy);
+    Value value = adaptor.getValueToStore();
+    for (int64_t start = 0; start < n; start += chunk) {
+      MaskEVL ce = getChunkEVL(rewriter, loc, *evl, start, chunk);
+      if (ce.constant == 0)
+        continue; // nothing to write in this chunk
+      Value ptr = LLVM::GEPOp::create(rewriter, loc, ptrTy, elemTy, base,
+                                      ArrayRef<LLVM::GEPArg>{start});
+      Value part = extractChunk(rewriter, loc, value, fullTy, chunkTy, start);
+      LLVM::CallIntrinsicOp::create(
+          rewriter, loc,
+          rewriter.getStringAttr(getVPIntrinsicName("store", chunkTy)),
+          ValueRange({part, ptr, allTrue, getEVLValue(rewriter, loc, ce)}));
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 
 struct PtrToIntOpConversion : public OpConversionPattern<triton::PtrToIntOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -663,8 +854,13 @@ struct MemoryOpToLLVM
 
     // Experimental RISC-V lowerings of tail-masked loads/stores (the masks
     // come from TailMaskToEVL): TRITON_VSETVL_MINE copies through a stack
-    // slot with a vsetvli loop, TRITON_VSETVL_LANE uses vp.load / vp.store.
-    if (getenv("TRITON_VSETVL_MINE")) {
+    // slot with a vsetvli loop, TRITON_VSETVL_CHUNK splits it into m8-group
+    // chunks kept in registers, TRITON_VSETVL_LANE uses vp.load / vp.store.
+    if (getenv("TRITON_VSETVL_CHUNK")) {
+      llvm::outs() << "!TRITON_VSETVL_CHUNK is set\n";
+      patterns.add<ChunkedVsetvlMaskedLoadOpConversion>(typeConverter, context);
+      patterns.add<ChunkedVsetvlMaskedStoreOpConversion>(typeConverter, context);
+    } else if (getenv("TRITON_VSETVL_MINE")) {
       llvm::outs() << "!TRITON_VSETVL_MINE is set\n";
       patterns.add<VsetvlMaskedLoadOpConversion>(typeConverter, context);
       patterns.add<VsetvlMaskedStoreOpConversion>(typeConverter, context);
@@ -683,8 +879,26 @@ struct MemoryOpToLLVM
     patterns.add<MakeTensorDescOpConversion>(typeConverter, context);
     patterns.add<ExtractMemRefOpConversion>(typeConverter, context);
 
+    // TRITON_VSETVL_STATS: print how many masked loads/stores reach this pass
+    // and how many are still masked after it (the rest were replaced).
+    auto countMasked = [&](int64_t &loads, int64_t &stores) {
+      loads = stores = 0;
+      mod.walk([&](Operation *op) {
+        loads += isa<vector::MaskedLoadOp>(op);
+        stores += isa<vector::MaskedStoreOp>(op);
+      });
+    };
+    int64_t loads0, stores0, loads1, stores1;
+    countMasked(loads0, stores0);
+
     if (failed(applyPartialConversion(mod, convTarget, std::move(patterns))))
       return signalPassFailure();
+
+    if (getenv("TRITON_VSETVL_STATS")) {
+      countMasked(loads1, stores1);
+      llvm::errs() << "VSETVL_STATS loads " << loads0 << " " << loads1
+                   << " stores " << stores0 << " " << stores1 << "\n";
+    }
   }
 };
 

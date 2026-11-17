@@ -7,14 +7,18 @@ source .venv/bin/activate
 export TRITON_EXT_ENABLED=1
 # Always build with the project's clang (never gcc). It has no default target
 # triple, so give CMake's compiler check an explicit host target. Link with lld
-# and compile through ccache (picked up from PATH).
-export CC=$HOME/llvm-project/install/bin/clang
-export CXX=$HOME/llvm-project/install/bin/clang++
+# and compile through ccache (picked up from PATH). Build with the Release clang
+# (install-rel): the Debug one in install takes ~130 s per MLIR source file. Triton
+# still links against the Debug LLVM/MLIR in $LLVM_BUILD_DIR.
+export CC=$HOME/llvm-project/install-rel/bin/clang
+export CXX=$HOME/llvm-project/install-rel/bin/clang++
 export CFLAGS="--target=x86_64-unknown-linux-gnu"
 export CXXFLAGS="--target=x86_64-unknown-linux-gnu"
 export LDFLAGS="-fuse-ld=lld"
 export PATH=$HOME/ccache/install/bin:$PATH
-#JSON_SYSPATH=$HOME/.triton/json TRITON_OFFLINE_BUILD=1 \
+# TRITON_BUILD_NVIDIA_GSAN_RUNTIME=0: the GSan runtime is compiled for sm_80,
+# which needs NVPTX in LLVM (ours is X86;RISCV only).
+#JSON_SYSPATH=$HOME/.triton/json TRITON_OFFLINE_BUILD=1 TRITON_BUILD_NVIDIA_GSAN_RUNTIME=0 \
 #  LLVM_INCLUDE_DIRS=$LLVM_BUILD_DIR/include \
 #  LLVM_LIBRARY_DIR=$LLVM_BUILD_DIR/lib \
 #  LLVM_SYSPATH=$LLVM_BUILD_DIR \
@@ -35,10 +39,10 @@ export TRITON_RISCV_LMUL=8
 export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
 # -debug-only for the MLIR passes (comma-separated).
 #export TRITON_LLVM_DEBUG_ONLY="analyze-tail-masks,tail-mask-to-evl,convert-memory-ops"
-export TRITON_LLVM_DEBUG_ONLY=""
+export TRITON_LLVM_DEBUG_ONLY="convert-memory-ops"
 
 cd python/tutorials/cpu
-KERNEL=mask2d
+KERNEL=${KERNEL:-mask2d}
 export TRITON_ALWAYS_COMPILE=1
 export TRITON_KERNEL_DUMP=1
 export TRITON_DUMP_DIR=artifacts/dump/$KERNEL

@@ -118,3 +118,35 @@ Test: `test/TritonCPU/tail-mask-to-evl.mlir`.
 - **The bounds stay attached as operands.** MLIR has no tensor-level `create_mask`, and an attribute on the load would be dropped more easily than an operand of a dedicated op.
 
 TailMaskToEVL keeps its own `cmpi` / iota matching for 1-D masks that did not come through a `tail_mask`.
+
+## Example that is not covered: the bitmask causal mask
+
+`python/tutorials/cpu/rvv_causal_mask_elf.py` runs the causal mask of the Gluon attention example (`python/examples/gluon/01-attention-forward.py`, `_mask_scalar` / `_apply_causal_mask`) on one `[BLOCK_M, BLOCK_N]` tile at a time:
+
+```python
+col_limit_right = (offs_m - start_n + 1)[:, None]
+s = offs_n & ~0xf                       # start of the lane's 16-column group
+i = offs_n & 0xf                        # lane inside the group
+mask = -1 << clamp(col_limit_right - s, 0, 16)
+keep = (mask & (1 << i)) == 0           # i < col_limit_right - s
+qk = where(keep, qk, -inf)
+```
+
+Per lane this is `offs_n < col_limit_right`: element `(r, c)` is kept iff `c <= r`. The 16-bit mask word exists so that ptxas can use one R2P instruction per 16 lanes on NVIDIA.
+
+With `TRITON_VSETVL_MINE=1` the generated code is byte-for-byte the same as without it, from `.ttir` to `.asm`:
+
+- **AnalyzeTailMasks** sees one mask, the `where` condition, and fails at its root (`-debug-only=analyze-tail-masks` prints `is CmpIOp eq` / `failed`). The condition is a `cmpi eq` of `andi(shli(...), shli(...))` against 0, not a `cmpi slt/sle/sgt/sge` of a range against a bound.
+- **TailMaskToEVL** has nothing to do: `M` and `N` are multiples of the tile, so the loads and stores have no mask.
+
+Writing the condition as `offs_n[None, :] < col_limit_right` would not be enough either:
+
+- **The mask is triangular, not a box.** The bound `col_limit_right` differs per row, so each row is a tail mask of its own length `r - start_n + 1`. `analyzeMask` needs one scalar bound per dimension (`cmpi` against a *splat* bound).
+- **The mask feeds a `select`, not a memory access.** TailMaskToEVL only gives an EVL to `vector.maskedload` / `vector.maskedstore`. A tail-masked `select` would need its own lowering to a length-limited merge (`vp.merge`, or `vmerge` with `vl` set to the row length).
+
+Covering it would take a per-row bound in AnalyzeTailMasks (a length per row that `ConvertMemoryOps` / the select lowering can attach to each row's `create_mask`) plus an EVL lowering for tail-masked selects.
+
+Two more things the kernel needed on the CPU backend, unrelated to tail masks:
+
+- **`gl.map_elementwise` has no CPU lowering.** `tt.map_elementwise` reaches LLVM translation unchanged and fails there, so the script applies `_mask_scalar` to the whole tile (its body is all elementwise ops).
+- **The shift must be capped.** The example computes `-1 << max(x, 0)` with `x` up to the tile width. A shift of 32 or more on `i32` is poison in LLVM, and RVV `vsll` uses only the low 5 bits (`-1 << 32 == -1`), which masks lanes that should be kept. The example only works on NVIDIA because PTX `shl` clamps the shift. Only bits 0..15 are tested, so the script caps the shift at 16.

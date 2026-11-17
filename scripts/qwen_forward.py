@@ -1,32 +1,156 @@
-"""Qwen2.5-0.5B prefill + two decode steps through torch.compile(inductor, cpu_backend="triton").
-
-Model script for scripts/tune_gemm_on_board.py (any script that runs a compiled model works).
-Env: QWEN_PROMPT, QWEN_MAX_CACHE_LEN.
-"""
-import os
+import argparse
 
 import torch
-import torch._inductor.config as inductor_config
-from transformers import AutoModelForCausalLM, AutoTokenizer, StaticCache
+from torch.nn.attention import SDPBackend, sdpa_kernel
+from transformers import AutoModelForCausalLM
 
-inductor_config.cpu_backend = "triton"
-inductor_config.max_autotune = False
-inductor_config.max_autotune_gemm = False
 
-MAX_CACHE_LEN = int(os.environ.get("QWEN_MAX_CACHE_LEN", "128"))
-PROMPT = os.environ.get("QWEN_PROMPT", "Please briefly explain what Time to First Token (TTFT) is.")
+MODEL_ID = "Qwen/Qwen2.5-0.5B-Instruct"
 
-name = os.path.join(os.environ["HOME"], "qwen2.5-0.5b-instruct")
-tok = AutoTokenizer.from_pretrained(name)
-model = AutoModelForCausalLM.from_pretrained(name, dtype=torch.bfloat16, attn_implementation="eager").eval()
-cache = StaticCache(config=model.config, max_cache_len=MAX_CACHE_LEN)
-model.forward = torch.compile(model.forward, backend="inductor", dynamic=False)
 
-ids = tok(PROMPT, return_tensors="pt").input_ids
-L = ids.shape[1]
-with torch.no_grad():
-    out = model(input_ids=ids, past_key_values=cache, cache_position=torch.arange(L), use_cache=True)
-    for step in range(2):
-        nxt = out.logits[:, -1, :].argmax(-1, keepdim=True)
-        out = model(input_ids=nxt, past_key_values=cache, cache_position=torch.tensor([L + step]), use_cache=True)
-print("model script finished")
+class ForwardOnly(torch.nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, input_ids, attention_mask):
+        outputs = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            use_cache=False,
+            return_dict=False,
+        )
+        return outputs[0]
+
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--seq-len",
+        type=int,
+        required=True,
+    )
+
+    parser.add_argument(
+        "--attention",
+        type=str,
+        default="eager",
+        choices=[
+            "eager",
+            "hf_flash2",
+            "flash_attention_2",
+        ],
+    )
+
+    args = parser.parse_args()
+
+    seq_len = args.seq_len
+
+    print("PyTorch   :", torch.__version__)
+    print("GPU       :", torch.cuda.get_device_name(0))
+    print("CC        :", torch.cuda.get_device_capability(0))
+    print("Model     :", MODEL_ID)
+    print("Seq len   :", seq_len)
+    print("Attention :", args.attention)
+
+    # ------------------------------------------------------------
+    # Select Hugging Face attention interface
+    # ------------------------------------------------------------
+
+    if args.attention == "hf_flash2":
+        hf_attention = "kernels-community/flash-attn2"
+
+    elif args.attention == "flash_attention_2":
+        hf_attention = "flash_attention_2"
+
+    else:
+        hf_attention = "eager"
+
+    print("HF attn   :", hf_attention)
+
+    # ------------------------------------------------------------
+    # Load model
+    # ------------------------------------------------------------
+
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_ID,
+        dtype=torch.float16,
+        attn_implementation=hf_attention,
+    )
+
+    model.eval()
+    model.to("cuda")
+
+    wrapper = ForwardOnly(model).eval()
+
+    # ------------------------------------------------------------
+    # torch.compile -> TorchDynamo -> TorchInductor
+    # ------------------------------------------------------------
+
+    compiled = torch.compile(
+        wrapper,
+        backend="inductor",
+        fullgraph=False,
+        dynamic=False,
+    )
+
+    # ------------------------------------------------------------
+    # Fixed deterministic input
+    # ------------------------------------------------------------
+
+    torch.manual_seed(0)
+
+    input_ids = torch.randint(
+        low=0,
+        high=model.config.vocab_size,
+        size=(1, seq_len),
+        dtype=torch.long,
+        device="cuda",
+    )
+
+    attention_mask = torch.ones(
+        (1, seq_len),
+        dtype=torch.long,
+        device="cuda",
+    )
+
+    print("Input shape:", tuple(input_ids.shape))
+
+    # ------------------------------------------------------------
+    # Run inference
+    # ------------------------------------------------------------
+
+    if args.attention == "sdpa_flash":
+        print(
+            "Forcing PyTorch SDPA backend:",
+            SDPBackend.FLASH_ATTENTION,
+        )
+
+        # Only allow FlashAttention.
+        #
+        # If PyTorch cannot execute this workload with FlashAttention,
+        # it should fail rather than silently falling back to another
+        # SDPA implementation.
+        with torch.inference_mode(), sdpa_kernel(
+            SDPBackend.FLASH_ATTENTION
+        ):
+            logits = compiled(
+                input_ids,
+            )
+
+    else:
+        with torch.inference_mode():
+            logits = compiled(
+                input_ids,
+                attention_mask,
+            )
+
+    torch.cuda.synchronize()
+
+    print("Logits shape:", tuple(logits.shape))
+    print("Done")
+
+
+if __name__ == "__main__":
+    main()

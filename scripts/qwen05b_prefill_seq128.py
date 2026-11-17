@@ -1,7 +1,4 @@
 import argparse
-import os
-
-os.environ.setdefault("TRITON_CPU_TARGET", "native")
 
 from vllm import LLM, SamplingParams
 from vllm.inputs import TokensPrompt
@@ -19,9 +16,8 @@ def main():
     parser.add_argument(
         "--attention-backend",
         type=str,
-        default=None,
-        choices=["CPU_ATTN", "TRITON_ATTN"],
-        help="omit to let vLLM pick its CPU default",
+        default="TRITON_ATTN",
+        choices=["TRITON_ATTN", "FLASH_ATTN"],
     )
     args = parser.parse_args()
 
@@ -36,20 +32,26 @@ def main():
         inductor_compile_config={"cpu_backend": "triton"},
     )
 
-    llm_kwargs = {}
-    if args.attention_backend is not None:
-        llm_kwargs["attention_backend"] = args.attention_backend
-
     llm = LLM(
         model=MODEL_ID,
-        dtype="bfloat16",
+        dtype="float16",
         tensor_parallel_size=1,
+
+        # Force a Triton attention implementation so attention
+        # also appears in the Triton workload we analyze.
+        attention_backend=args.attention_backend,
+
+        # vLLM custom compile path, but disable CUDA Graphs
+        # to keep the compiler experiment easier to interpret.
         compilation_config=compile_config,
+
         max_model_len=1024,
         max_num_seqs=1,
-        **llm_kwargs,
+        gpu_memory_utilization=0.70,
     )
 
+    # Fixed-length tokenized input.
+    # All IDs are safely inside Qwen's vocabulary.
     token_ids = [
         1000 + (i % 10000)
         for i in range(args.seq_len)

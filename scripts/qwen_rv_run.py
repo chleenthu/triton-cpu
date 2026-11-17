@@ -12,7 +12,7 @@ import torch
 from triton.backends.cpu.driver import ty_to_cpp
 from triton.backends.cpu.riscv import build_standalone_executable, compile_kernel_to_so
 
-OUT = os.path.expanduser("~/qwen_rv")
+OUT = os.path.expanduser(os.environ.get("QWEN_RV_DIR", "~/qwen_rv"))
 HOST = os.environ.get("TRITON_RISCV_HOST", "chlee@140.114.78.64")
 ITERS = 10
 
@@ -52,10 +52,24 @@ SAVES
 """
 
 
-def groups(meta):
-    """Merge pointer args whose byte ranges overlap (e.g. RoPE: out_ptr1 == out_ptr0 + 32)
-    into one buffer: {arg index: (group, byte offset)}, [(group base, group size)]."""
-    bufs = sorted((a[4], a[4] + a[3], i) for i, a in enumerate(meta["args"]) if a[1][0] == "*")
+def buffers(meta):
+    """Every buffer the launch can touch: {key: (address, nbytes, dtype, input file, ref file)}.
+    Pointer args are keyed by arg index i; tensors reached through a uint64 *_ptrs table
+    (qwen_capture.py's "indirect") by (i, j)."""
+    bufs = {i: (a[4], a[3], a[2], f"in{i}.bin", f"ref{i}.bin")
+            for i, a in enumerate(meta["args"]) if a[1][0] == "*"}
+    for i, entries in meta.get("indirect", {}).items():
+        for j, e in enumerate(entries):
+            if e is None:
+                raise RuntimeError(f"{meta['args'][i][0]}[{j}]: pointed-to tensor not captured")
+            bufs[i, j] = (e[0], e[1], e[2], f"ind{i}_{j}.bin", f"refind{i}_{j}.bin")
+    return bufs
+
+
+def groups(bufs):
+    """Merge buffers whose byte ranges overlap (e.g. RoPE: out_ptr1 == out_ptr0 + 32)
+    into one: {buffer key: (group, byte offset)}, [(group base, group size)]."""
+    bufs = sorted((addr, addr + n, key) for key, (addr, n, *_) in bufs.items())
     where, spans = {}, []
     for lo, hi, i in bufs:
         if spans and lo < spans[-1][0] + spans[-1][1]:
@@ -68,6 +82,7 @@ def groups(meta):
 
 
 def make_runner(sym, meta, where, spans, outs):
+    """C main: load the groups, point every uint64 *_ptrs entry at its board copy, run."""
     types, decls, names = [], [], []
     loads = [f'  char *g{k} = load("g{k}.bin", {n});' for k, (_, n) in enumerate(spans)]
     saves = [f'  save("gout{k}.bin", g{k}, {spans[k][1]});' for k in outs]
@@ -83,6 +98,10 @@ def make_runner(sym, meta, where, spans, outs):
             loads.append(f"  {ty_to_cpp(ty)} a{i} = {val!r};")
         decls.append(f"{types[-1]} a{i}")
         names.append(f"a{i}")
+    for i, entries in meta.get("indirect", {}).items():
+        for j in range(len(entries)):
+            k, off = where[i, j]
+            loads.append(f"  ((uint64_t *)a{i})[{j}] = (uint64_t)(g{k} + {off});")
     gx, gy, gz = meta["grid"]
     return (RUNNER.replace("SYM", sym).replace("TYPES", ", ".join(types + ["uint32_t"] * 6))
             .replace("DECLS", ", ".join(decls) or "void").replace("CALL", "".join(f"{a}, " for a in names))
@@ -110,17 +129,18 @@ def test(name):
     args = meta["args"]
     sig = {a[0]: a[1] for a in args if a[1] != "constexpr"}
     cst = {a[0]: a[2] for a in args if a[1] == "constexpr"}
-    compiled, so = compile_kernel_to_so(load_kernel(d, name), {}, constexprs=cst, signature=sig)
+    compiled, so = compile_kernel_to_so(load_kernel(d, meta["fn"]), {}, constexprs=cst, signature=sig)
     sym = compiled.metadata.name
 
-    where, spans = groups(meta)
-    refs = [i for i in where if os.path.exists(f"{d}/ref{i}.bin")]
+    bufs = buffers(meta)
+    where, spans = groups(bufs)
+    refs = [key for key in where if os.path.exists(f"{d}/{bufs[key][4]}")]
     if not refs:
         return "SKIP: launch changed no buffer"
     outs = sorted({where[i][0] for i in refs})
     blobs = [bytearray(n) for _, n in spans]
-    for i, (k, off) in where.items():
-        with open(f"{d}/in{i}.bin", "rb") as f:
+    for key, (k, off) in where.items():
+        with open(f"{d}/{bufs[key][3]}", "rb") as f:
             data = f.read()
         blobs[k][off:off + len(data)] = data
     for k, blob in enumerate(blobs):
@@ -128,7 +148,7 @@ def test(name):
             f.write(blob)
     exe, lib = build_standalone_executable(sym, so, make_runner(sym, meta, where, spans, outs), f"{d}/run")
 
-    remote = f"qwen_rv/{name}"
+    remote = f"{os.path.basename(OUT.rstrip('/'))}/{name}"
     gs = [f"{d}/g{k}.bin" for k in range(len(spans))]
     subprocess.run(["ssh", HOST, f"rm -rf {remote} && mkdir -p {remote}"], check=True)
     subprocess.run(["scp", "-q", str(exe), str(lib), *gs, f"{HOST}:{remote}/"], check=True)
@@ -138,15 +158,16 @@ def test(name):
     subprocess.run(["scp", "-q", *[f"{HOST}:{remote}/gout{k}.bin" for k in outs], f"{d}/"], check=True)
 
     worst = 0.0
-    for i in refs:
-        k, off = where[i]
-        n, dtype = args[i][3], args[i][2]
+    for key in refs:
+        k, off = where[key]
+        _, n, dtype, _, ref_file = bufs[key]
+        label = args[key][0] if isinstance(key, int) else f"{args[key[0]][0]}[{key[1]}]"
         with open(f"{d}/gout{k}.bin", "rb") as f:
             got = read(f.read()[off:off + n], dtype)
-        with open(f"{d}/ref{i}.bin", "rb") as f:
+        with open(f"{d}/{ref_file}", "rb") as f:
             ref = read(f.read(), dtype)
         if not torch.allclose(got, ref, rtol=1e-2, atol=1e-2, equal_nan=True):
-            return f"MISMATCH {args[i][0]}: max err {(got - ref).abs().max().item():.4g}"
+            return f"MISMATCH {r.stdout.strip():>12}  {label}: max err {(got - ref).abs().max().item():.4g}"
         worst = max(worst, (got - ref).abs().max().item())
     return f"PASS  {r.stdout.strip():>12}  max err {worst:.3g}"
 

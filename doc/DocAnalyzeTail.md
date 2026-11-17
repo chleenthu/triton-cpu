@@ -144,3 +144,14 @@ Where each value comes from:
 The pass then replaces the mask operand of both loads and the store with `triton_cpu.tail_mask %b0, %b1`, where `%b0 = M - rm` and `%b1 = N - rn` are materialized as `i32` scalars.
 
 The values are filled in bottom-up, but the calls run top-down. The pass calls `analyzeMask(%mask_13, 0)`, which calls `analyzeMask` on `%mask_11` and `%mask_12`, and so on down to the `make_range`s. Each result is computed when its call returns. With `-debug-only=analyze-tail-masks`, `printIntInfo` prints the `analyzeInt` results and the `analyzeMask depth=N { ... }` blocks print the `Box` results, showing this nesting.
+
+## Bit-test masks: `(C & (1 << i)) != 0`
+
+`(C & (1 << i)) != 0` reaches the pass as `arith.cmpi ne` of `andi(splat C, shli(splat 1, range))` against 0. AnalyzeTailMasks only matches `cmpi slt/sle/sgt/sge` of a range plus offset against a bound, so the trace shows `is CmpIOp ne` → `failed` regardless of the constant. Nothing earlier rewrites the expression into `i < n`, because no pass in the pipeline folds a bit test into a compare.
+
+To make it work, you can either:
+
+- **Write it as a compare:** `i < n`. This is detected today and produces the same code as `rvv_mask2d_elf.py`.
+- **Teach `analyzeMask` the bit-test forms:**
+  - `(C & (1 << i)) != 0` with a constant `C = 2^n - 1` gives bound `n`, where `n` is the number of trailing 1 bits. It must check that `C + 1` is a power of two; 25 would be rejected.
+  - `(((1 << k) - 1) & (1 << i)) != 0` and `((-1 << k) & (1 << i)) == 0` with a scalar `k` give bound `k`, valid only when `k` is provably within 0..bit width (for example behind a `min`/`max` clamp, as in the causal mask). Otherwise the shift is poison.

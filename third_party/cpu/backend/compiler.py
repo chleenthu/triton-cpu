@@ -117,9 +117,12 @@ class CPUOptions:
 
 
 def _vsetvl_enabled():
-    # TRITON_VSETVL_MINE: vsetvli-loop loads/stores, TRITON_VSETVL_LANE:
-    # vp.load/vp.store, TRITON_VSETVL_REDUCE: masked (vp.reduce) reductions.
-    return any(os.getenv(v) for v in ("TRITON_VSETVL_MINE", "TRITON_VSETVL_LANE", "TRITON_VSETVL_REDUCE"))
+    # TRITON_VSETVL_MINE: vsetvli-loop loads/stores, TRITON_VSETVL_CHUNK:
+    # m8-group chunks with per-chunk vsetvli, kept in registers,
+    # TRITON_VSETVL_LANE: vp.load/vp.store, TRITON_VSETVL_REDUCE: masked
+    # (vp.reduce) reductions.
+    return any(os.getenv(v) for v in ("TRITON_VSETVL_MINE", "TRITON_VSETVL_CHUNK", "TRITON_VSETVL_LANE",
+                                      "TRITON_VSETVL_REDUCE"))
 
 
 class CPUBackend(BaseBackend):

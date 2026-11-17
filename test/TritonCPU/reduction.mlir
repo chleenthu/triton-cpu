@@ -58,8 +58,12 @@ module {
   // CHECK: vector.reduction <maxnumf>, {{.*}}, %[[NINF]]
   // CHECK: %[[NAN:.*]] = arith.constant 0x7FF8000000000000 : f64
   // CHECK: vector.reduction <minimumf>, {{.*}}, %[[NAN]]
-  // CHECK: %[[NAN_SPLAT:.*]] = arith.constant dense<0x7FC0> : vector<2xbf16>
-  // CHECK: vector.multi_reduction <maximumf>, {{.*}}, %[[NAN_SPLAT]]
+  // Narrow floats (bf16/f16) are not mapped to vector.multi_reduction: without
+  // Zvfbfa/Zvfh, RVV would scalarize it into a chain of rounded scalar ops, so
+  // they use the shuffle butterfly (see isNarrowFloat in ConvertReductionOp.cpp).
+  // CHECK-NOT: vector.multi_reduction
+  // CHECK: vector.shuffle {{.*}} : vector<4xbf16>, vector<1xbf16>
+  // CHECK: arith.maximumf {{.*}} : vector<4xbf16>
   tt.func public @floating_initializers(%half: tensor<4xf16>, %single: tensor<4xf32>, %double: tensor<4xf64>, %brain: tensor<2x4xbf16>) -> (f16, f32, f64, tensor<2xbf16>) {
     %min_num = "tt.reduce"(%half) <{axis = 0 : i32}> ({
     ^bb0(%lhs: f16, %rhs: f16):

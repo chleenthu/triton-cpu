@@ -107,6 +107,8 @@ docs/sg_execution_times.rst
 AGENTS.override.md
 artifacts/
 torch_compile_debug/
-dump_sta/
 dump/
 dump*/
+scripts/inductor_cache*/
+scripts/triton_cache*/
+scripts/triton_dump*/

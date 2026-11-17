@@ -361,17 +361,19 @@ struct ReduceOpConversion
       initVal = rewriter.getIntegerAttr(
           elemTy,
           llvm::APInt::getSignedMaxValue(elemTy.getIntOrFloatBitWidth()));
+    // Float min/max start from the opposite infinity: max(-inf, x) == x for
+    // every x (NaN included), so this is the identity of both the NaN-ignoring
+    // (*NUMF) and the NaN-propagating (MINIMUMF/MAXIMUMF) kinds. A NaN start
+    // value would make every MINIMUMF/MAXIMUMF reduction return NaN.
     else if (kind == vector::CombiningKind::MINIMUMF ||
-             kind == vector::CombiningKind::MAXIMUMF)
-      initVal = rewriter.getFloatAttr(
-          elemTy,
-          llvm::APFloat::getQNaN(cast<FloatType>(elemTy).getFloatSemantics()));
-    else if (kind == vector::CombiningKind::MINNUMF ||
+             kind == vector::CombiningKind::MAXIMUMF ||
+             kind == vector::CombiningKind::MINNUMF ||
              kind == vector::CombiningKind::MAXNUMF)
       initVal = rewriter.getFloatAttr(
           elemTy,
           llvm::APFloat::getInf(cast<FloatType>(elemTy).getFloatSemantics(),
-                                kind == vector::CombiningKind::MAXNUMF));
+                                kind == vector::CombiningKind::MAXIMUMF ||
+                                    kind == vector::CombiningKind::MAXNUMF));
 
     if (vecTy)
       initVal = SplatElementsAttr::get(vecTy, initVal);

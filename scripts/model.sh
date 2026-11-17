@@ -18,7 +18,9 @@ export TRITON_LOCAL_LIBOMP_PATH=$HOME/.triton-native-libomp
 export OMP_NUM_THREADS=8
 export VLLM_CPU_KVCACHE_SPACE=4
 
+export QWEN_RV_DIR=~/qwen_rv
+rm -rf "$QWEN_RV_DIR"
 #python "$HERE/qwen05b_prefill_seq128.py" "$@"
 cd ~/triton-cpu/scripts
-python qwen_capture.py "$@"
+python qwen_capture.py qwen05b_prefill_seq128.py
 python qwen_rv_run.py

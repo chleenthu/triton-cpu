@@ -49,6 +49,42 @@ the x86 run's cache entries (each `.so` checked to be x86-64).
 | vLLM kernels compiled | 29 | 11 |
 | **Total compiled** | **43** | **25** |
 
+## Cache entries, compiled kernels and launched kernels
+
+| Run | Device | Cache entries | Compiled kernels | Actual (launched) |
+|---|---|---|---|---|
+| vLLM (`qwen05b_prefill_seq128.py`) | CPU (x86) | 42 | 25 | 20 |
+| | GPU (RTX 3060 Ti) | 44 | 43 | 19 |
+| TorchInductor (`qwen_forward_seq128.py`) | CPU (x86) | 35 | 28 | 18 |
+| | GPU (RTX 3060 Ti) | 21 | 20 | 14 |
+
+- **Cache entries** = every directory in `TRITON_CACHE_DIR`. Besides one entry
+  per compiled kernel, the GPU cache always has one `cuda_utils` driver module,
+  and the CPU cache has one `__triton_cpu_launcher.so` per launch signature (17
+  for vLLM, 7 for TorchInductor).
+- **Compiled kernels** = cache entries that hold a kernel binary (the same as the
+  dump entries in `TRITON_DUMP_DIR`), one per autotune config or argument
+  specialization.
+- **Actual** = distinct kernels launched in the real run, counted with a
+  `triton.knobs.runtime.launch_enter_hook` (GPU) or `qwen_capture.py` (CPU).
+  vLLM's warmup launches (`_dummy_run`, `profile_run`, `_dummy_sampler_run`,
+  `compile_or_warm_up_model`) are excluded; only `LLM.generate` counts.
+- **vLLM GPU actual** was measured on the GX10 (GB10, `-p 54323
+  chlee@140.114.78.56`; 42 entries / 41 compiled there): the RTX 3060 Ti did not
+  have enough free memory. The 19 are 8 Inductor kernels, the same 9
+  input-preparation/sampling kernels as on CPU, and `kernel_unified_attention` +
+  `reshape_and_cache_kernel_flash`. `reduce_segments` and the sampler kernels
+  (`_topk_topp`, `_temperature`, …) are compiled by warmup only; the 128-token
+  prefill uses the 2D attention kernel (`MAX_3D_QUERY_LEN = 8`).
+- **TorchInductor** is the GPU box's `scripts/qwen_forward.py` (one forward pass,
+  `use_cache=False`, HF eager attention, 128 random tokens); the x86 port is
+  `scripts/qwen_forward_seq128.py` (bf16 instead of fp16). The 18 vs 14 launched
+  kernels differ only in RoPE: CUDA fuses q/k RoPE into one kernel, the CPU Triton
+  backend emits five.
+- A cache shared by several runs over-counts: `model.sh` runs `qwen_capture.py`
+  and `qwen_rv_run.py` with the same `TRITON_CACHE_DIR`, so `scripts/triton_cache`
+  also collects the RISC-V builds. Count from a fresh cache.
+
 ## Inductor (CPU): 11 sources → 14 compiled
 
 | Source | Kind | Configs (XBLOCK) | Picked on x86 |
@@ -113,28 +149,57 @@ board with the captured inputs, compares every buffer the x86 launch changed
 |---|---|---|---|
 | `_apply_write_kernel` | PASS | 0.002 | 0 |
 | `_combine_sampled_and_draft_tokens_kernel` | PASS | 0.000 | 0 |
-| `_compute_slot_mappings_kernel` | crash | – | – |
-| `_gather_block_tables_kernel` | crash | – | – |
+| `_compute_slot_mappings_kernel` | run failed (exit 255) | – | – |
+| `_gather_block_tables_kernel` | skipped | – | – |
 | `_get_num_sampled_and_rejected_kernel` | PASS | 0.000 | 0 |
-| `_gumbel_sample_kernel` | PASS | 1.867 | 0 |
+| `_gumbel_sample_kernel` | PASS | 1.874 | 0 |
 | `_post_update_kernel` | PASS | 0.000 | 0 |
-| `_prepare_pos_seq_lens_kernel` | PASS | 0.006 | 0 |
+| `_prepare_pos_seq_lens_kernel` | PASS | 0.008 | 0 |
 | `_prepare_prefill_inputs_kernel` | PASS | 0.002 | 0 |
-| RMSNorm + embedding `rsqrt_0` | PASS | 0.885 | 0.0078 |
-| RMSNorm + embedding `rsqrt_3` | PASS | 1.569 | 0.0625 |
-| RMSNorm + embedding `rsqrt_5` | PASS | 2.396 | 0.0625 |
-| RMSNorm + embedding `rsqrt_6` | PASS | 3.375 | 0.0625 |
-| RMSNorm + residual `rsqrt_7` | PASS | 1.365 | 1 |
-| RMSNorm + residual `rsqrt_8` | PASS | 2.311 | 0.125 |
-| RMSNorm + residual `rsqrt_9` | PASS | 3.236 | 0.125 |
-| RMSNorm + residual `rsqrt_10` | PASS | 4.633 | 0.25 |
-| RoPE `view_1` | pending | | |
-| RoPE `view_2` | pending | | |
-| SiLU-mul `silu_slice_4` | pending | | |
+| RMSNorm + embedding `rsqrt_0` | PASS | 1.211 | 0 |
+| RMSNorm + embedding `rsqrt_3` | PASS | 1.985 | 0 |
+| RMSNorm + embedding `rsqrt_5` | PASS | 2.848 | 0 |
+| RMSNorm + embedding `rsqrt_6` | PASS | 3.927 | 0 |
+| RMSNorm + residual `rsqrt_7` | PASS | 1.750 | 0 |
+| RMSNorm + residual `rsqrt_8` | PASS | 2.852 | 0 |
+| RMSNorm + residual `rsqrt_9` | PASS | 3.639 | 0 |
+| RMSNorm + residual `rsqrt_10` | PASS | 5.171 | 0 |
+| RoPE `view_1` | PASS | 1475.972 | 0 |
+| RoPE `view_2` | PASS | 207.292 | 0 |
+| SiLU-mul `silu_slice_4` | PASS | 8185.040 | 0 |
 
-- **Max error** is absolute, in bf16. The larger values (0.25, 1) are on large
-  residual-stream values, where one bf16 rounding step is that big; they are
-  within the relative tolerance.
-- **Crashes:** `_compute_slot_mappings_kernel` and `_gather_block_tables_kernel`
-  read `*_block_table_ptrs`, tables of raw x86 addresses, which are invalid on the
-  board. This is a limit of replaying one launch in isolation, not of triton-cpu.
+- **Max error** is absolute, in bf16. In this run every checked kernel matches the
+  x86 result exactly.
+- **`_compute_slot_mappings_kernel`:** the board run exits with status 255 and no
+  stderr. The kernel reads `*_block_table_ptrs`, tables of raw x86 addresses, which
+  are invalid on the board. This is a limit of replaying one launch in isolation,
+  not of triton-cpu.
+- **`_gather_block_tables_kernel`** is skipped: its captured x86 launch changed no
+  buffer, so there is nothing to compare, and `qwen_rv_run.py` does not run it.
+
+# Masked loads/stores replaced by `TRITON_VSETVL_CHUNK`
+
+Per launched kernel: how many `vector.maskedload` / `vector.maskedstore` reach
+`MemoryOpToLLVM` (blue), and how many `TRITON_VSETVL_CHUNK` lowers to
+`vp.load` / `vp.store` instead of `llvm.masked.load` / `llvm.masked.store`
+(orange). Solid = loads, hatched = stores.
+
+Counted with `scripts/qwen_rv_masks.py`: it compiles every captured kernel for
+riscv64 with `TRITON_VSETVL_CHUNK=1 TRITON_VSETVL_REDUCE=1 TRITON_VSETVL_STATS=1`.
+With `TRITON_VSETVL_STATS` set, `MemoryOpToLLVM` prints the masked op counts
+before and after its conversion. Plotted with `~/tex/png/kernel_mask_count.py`.
+
+| Flow | Kernels | Masked loads/stores | Replaced |
+|---|---|---|---|
+| vLLM | 20 | 60 | 60 |
+| TorchInductor | 18 | 48 | 48 |
+
+- **Every masked op is replaced.** No kernel keeps an `llvm.masked.load` or
+  `llvm.masked.store`.
+- **RMSNorm** has 3–8 per kernel, and **softmax** has 2.
+- **RoPE** (both flows) and **TorchInductor SiLU** have none, so any change in their
+  board time is not from mask removal. vLLM SiLU has 1 masked store.
+
+![vLLM masked loads/stores](fig/qwen_vllm_prefill_rv_masks.png)
+
+![TorchInductor masked loads/stores](fig/qwen_forward_prefill_rv_masks.png)
