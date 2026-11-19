@@ -42,13 +42,13 @@ export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
 export TRITON_LLVM_DEBUG_ONLY="convert-memory-ops"
 
 cd python/tutorials/cpu
-KERNEL=${KERNEL:-mask2d}
+KERNEL=${KERNEL:-mask_branch}
 export TRITON_ALWAYS_COMPILE=1
 export TRITON_KERNEL_DUMP=1
 export TRITON_DUMP_DIR=artifacts/dump/$KERNEL
 export TRITON_CPU_BACKEND=1
 #export TRITON_CPU_FLIP_TO_SHUFFLE=1
-export TRITON_VSETVL_MINE=1
+export TRITON_VSETVL_CHUNK=1
 #python python/tutorials/cpu/rvv_03-matrix-multiplication_elf.py
 python rvv_"$KERNEL"_elf.py
 

@@ -199,3 +199,76 @@ before and after its conversion. Plotted with `~/tex/png_script/kernel_mask_coun
 - **RMSNorm** has 3–8 per kernel, and **softmax** has 2.
 - **RoPE** (both flows) and **TorchInductor SiLU** have none, so any change in their
   board time is not from mask removal. vLLM SiLU has 1 masked store.
+
+# fp16, bf16 and the RISC-V vector extensions
+
+## Which extensions are fp16 and which are bf16
+
+The fp16 and bf16 extensions are separate families. bf16 has no "full arithmetic"
+extension like Zvfh: the ratified set only converts bf16 to/from f32 and does the
+widening multiply-add that matmul needs, and all other math is done in f32.
+
+| | fp16 (IEEE half) | bf16 |
+|---|---|---|
+| scalar, conversions only | Zfhmin | Zfbfmin |
+| scalar, full arithmetic | Zfh | none |
+| vector, conversions only (also makes f16 vectors a legal type) | Zvfhmin | Zvfbfmin |
+| vector, full arithmetic | Zvfh | none ratified |
+| vector, widening multiply-add into f32 | covered by Zvfh | Zvfbfwma (`vfwmaccbf16`) |
+
+There is no "Zvfbf". A proposal for more bf16 vector arithmetic (Zvfbfa) exists but is
+not ratified.
+
+The board (`chlee@140.114.78.64`, SpacemiT X60) reports in `/proc/cpuinfo`:
+`zfh_zfhmin` and `zvfh_zvfhmin`, i.e. **all of fp16, none of bf16** (no `zfbfmin`,
+`zvfbfmin` or `zvfbfwma`).
+
+How the backend handles this today:
+
+- **bf16:** `compiler.py` (`promote_bf16_to_fp32`, `decompose_bf16_conv`) does bf16
+  memory ops on `i16` and decomposes bf16↔f32 conversions on riscv64, so no bf16
+  vector instruction is needed.
+- **Codegen target features** are hard-coded in `third_party/cpu/llvm.cc:192` as
+  `{"+m", "+f", "+d", "+v", "+zvfbfmin"}`. This **claims Zvfbfmin, which the board
+  does not have**, and **omits Zvfh/Zvfhmin, which it does**. The workaround above
+  keeps the first from causing trouble; the second is what breaks fp16 with
+  `TRITON_VSETVL_CHUNK` (below). The list that matches the board would be
+  `{"+m", "+f", "+d", "+v", "+zfh", "+zvfh"}`.
+
+## fp16 with `TRITON_VSETVL_CHUNK` fails in LLVM codegen
+
+`python/tutorials/cpu/rvv_gqa_attn_elf.py` is the `_attn_fwd` kernel of the fused
+Qwen2.5 prefill (causal GQA reading a fused QKV buffer), with fp16 I/O like that
+pipeline:
+
+| build | result |
+|---|---|
+| fp16, no `TRITON_VSETVL_*` | PASS on the board |
+| fp16, `TRITON_VSETVL_CHUNK=1 TRITON_VSETVL_REDUCE=1` | `LLVM ERROR: Do not know how to scalarize the result of this operator!` (`vp_load v1f16`) |
+| fp32 or bf16, `TRITON_VSETVL_CHUNK=1 TRITON_VSETVL_REDUCE=1` | PASS on the board |
+
+CHUNK lowers the masked row loads/stores to `llvm.vp.load.v16f16` /
+`llvm.vp.store.v16f16`. Without `+zvfhmin`, f16 vectors are not a legal type, so LLVM
+splits the op down to single elements, and it cannot scalarize a VP op. Without CHUNK
+the same loads are `llvm.masked.load` / `llvm.masked.store`, which LLVM can legalize
+by splitting, so plain fp16 works. bf16 under CHUNK is fine because its
+`vp.load` / `vp.store` are on `i16`.
+
+Fixes (neither done yet): add `+zvfhmin` (or `+zvfh`) to the riscv64 feature list in
+`llvm.cc`, which matches the board; or have CHUNK/LANE do f16 `vp.load` / `vp.store`
+on `i16` and bitcast, as for bf16.
+
+## Why `scripts/model.sh` and `scripts/model_forward.sh` don't hit it
+
+- **Neither script sets any `TRITON_VSETVL_*` flag**, so the kernels they run on
+  the board use `llvm.masked.load` / `llvm.masked.store`, which work for every dtype.
+- **The kernels they capture are not fp16.** `model_forward.sh` loads the model in
+  bf16 (`qwen_forward_seq128.py`: `dtype=torch.bfloat16`). `model.sh` runs
+  `qwen05b_prefill_seq128.py`, which asks vLLM for `dtype="float16"` (since
+  `c79213223`), yet the 20 kernels captured in `~/qwen_rv` on 2026-11-19 have only
+  `*bf16`, `*fp32` and integer pointer arguments. Where vLLM's CPU path turns the
+  requested fp16 into bf16 is not traced yet.
+- That is also why the CHUNK counts in the previous section (from `qwen_rv_masks.py`,
+  which compiles every captured kernel with `TRITON_VSETVL_CHUNK=1`) built without
+  errors: there was no fp16 kernel among them. A real fp16 kernel compiled with
+  CHUNK would fail as above until the feature list is fixed.

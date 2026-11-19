@@ -59,9 +59,9 @@ Masks it recognizes:
 | `tt.expand_dims`, `tt.broadcast`, `tt.trans`, `arith.constant` | Moves or reshapes the box |
 | `triton_cpu.tail_mask` | Already a box |
 | `scf.if` result | Both yielded masks are boxes: per-dim `cond ? then : else` (see `DocMaskBranch.md`). Skipped if a bound is defined inside a branch and so is not visible at the user. |
-| `scf.for` iter_arg / result | Init and yielded masks are boxes: the loop gets one extra `i32` iter_arg per axis that carries the bounds (see `DocMaskBranch.md`) |
+| `scf.for` iter_arg / result, `scf.while` argument / result | Init and yielded masks are boxes: the loop gets one extra `i32` value per axis that carries the bounds (see `DocMaskBranch.md`) |
 
-Index tensors are described through `tt.make_range`, `tt.splat`, `tt.expand_dims`, `tt.broadcast`, `tt.trans`, `arith.addi` / `arith.subi`, `arith.constant`, and `scf.for` iter_args / results whose scalar is carried by an extra `i32` iter_arg (see `DocMaskBranch.md`). A dimension of size 1 broadcast to `size` becomes `B >= 1 ? size : 0`.
+Index tensors are described through `tt.make_range`, `tt.splat`, `tt.expand_dims`, `tt.broadcast`, `tt.trans`, `arith.addi` / `arith.subi`, `arith.constant`, `scf.if` results (both branches the same shape; the scalar becomes a select) and `scf.for` iter_args / results and `scf.while` arguments / results whose scalar is carried by an extra `i32` value (see `DocMaskBranch.md`). A splat's scalar is rebuilt from constants and `arith.addi` / `arith.subi`, so its parts can be used where the scalar itself is not visible. A dimension of size 1 broadcast to `size` becomes `B >= 1 ? size : 0`.
 
 Tests: `test/TritonCPU/analyze-tail-masks.mlir`, `test/TritonCPU/convert-tail-masks.mlir`.
 
