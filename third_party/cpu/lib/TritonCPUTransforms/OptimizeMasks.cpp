@@ -2,6 +2,7 @@
 #include "cpu/include/TritonCPUTransforms/Passes.h"
 
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -22,6 +23,80 @@ using namespace mlir::triton;
 using namespace mlir::triton::cpu;
 
 namespace {
+
+// True if `op` (or anything nested in it) may write memory. Ops without a
+// MemoryEffectOpInterface and without recursive effects count as writing.
+bool mayWrite(Operation *op) {
+  if (auto mei = dyn_cast<MemoryEffectOpInterface>(op)) {
+    if (mei.hasEffect<MemoryEffects::Write>() ||
+        mei.hasEffect<MemoryEffects::Free>() ||
+        mei.hasEffect<MemoryEffects::Allocate>())
+      return true;
+  } else if (!op->hasTrait<OpTrait::HasRecursiveMemoryEffects>()) {
+    return true;
+  }
+  if (op->hasTrait<OpTrait::HasRecursiveMemoryEffects>())
+    for (Region &r : op->getRegions())
+      for (Block &b : r)
+        for (Operation &o : b)
+          if (mayWrite(&o))
+            return true;
+  return false;
+}
+
+// True if `op` has no regions and its only memory effects are reads.
+bool onlyReads(Operation *op) {
+  auto mei = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!mei || op->getNumRegions())
+    return false;
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  mei.getEffects(effects);
+  return llvm::all_of(effects, [](auto &e) {
+    return isa<MemoryEffects::Read>(e.getEffect());
+  });
+}
+
+// TRITON_SINK_LOADS: walk `block` bottom-up and move every region-free op
+// with a vector result that is pure or only reads memory to just before its
+// first user in the block. A read is never moved past an op that may write.
+// Going bottom-up lets a load follow the conversions computed from it.
+void sinkToFirstUse(Block &block) {
+  SmallVector<Operation *> ops;
+  for (Operation &op : block.without_terminator())
+    ops.push_back(&op);
+  for (Operation *op : llvm::reverse(ops)) {
+    if (op->getNumRegions() || op->getNumResults() == 0 ||
+        !llvm::any_of(op->getResultTypes(),
+                      [](Type t) { return isa<VectorType>(t); }))
+      continue;
+    bool pure = isMemoryEffectFree(op);
+    if (!pure && !onlyReads(op))
+      continue;
+    Operation *first = nullptr;
+    bool ok = true;
+    for (Value r : op->getResults())
+      for (Operation *user : r.getUsers()) {
+        Operation *a = block.findAncestorOpInBlock(*user);
+        if (!a) {
+          ok = false;
+          continue;
+        }
+        if (!first || a->isBeforeInBlock(first))
+          first = a;
+      }
+    if (!ok || !first)
+      continue;
+    if (!pure)
+      for (Operation *it = op->getNextNode(); it != first;
+           it = it->getNextNode())
+        if (mayWrite(it)) {
+          first = it;
+          break;
+        }
+    if (first != op->getNextNode())
+      op->moveBefore(first);
+  }
+}
 
 int64_t getDivisibility(Value val) {
   BlockArgument blockArg = dyn_cast<BlockArgument>(val);
@@ -354,6 +429,12 @@ struct OptimizeMasks
     patterns.add<OptimizeMask>(context);
     if (failed(mlir::applyPatternsGreedily(mod, std::move(patterns))))
       return signalPassFailure();
+
+    // Experimental: move vector loads (and the pure vector ops computing from
+    // them) down to their first use, so a large loaded row is not kept live
+    // across unrelated code such as the scf.if of a masked scalar load.
+    if (getenv("TRITON_SINK_LOADS"))
+      mod.walk([](Block *block) { sinkToFirstUse(*block); });
 
     // TODO: if masks removal failed for loads/stores in a for-loop, we might
     // still optimize it using loop peeling.

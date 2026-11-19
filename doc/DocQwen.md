@@ -187,7 +187,7 @@ Per launched kernel: how many `vector.maskedload` / `vector.maskedstore` reach
 Counted with `scripts/qwen_rv_masks.py`: it compiles every captured kernel for
 riscv64 with `TRITON_VSETVL_CHUNK=1 TRITON_VSETVL_REDUCE=1 TRITON_VSETVL_STATS=1`.
 With `TRITON_VSETVL_STATS` set, `MemoryOpToLLVM` prints the masked op counts
-before and after its conversion. Plotted with `~/tex/png/kernel_mask_count.py`.
+before and after its conversion. Plotted with `~/tex/png_script/kernel_mask_count.py`.
 
 | Flow | Kernels | Masked loads/stores | Replaced |
 |---|---|---|---|
@@ -199,7 +199,3 @@ before and after its conversion. Plotted with `~/tex/png/kernel_mask_count.py`.
 - **RMSNorm** has 3–8 per kernel, and **softmax** has 2.
 - **RoPE** (both flows) and **TorchInductor SiLU** have none, so any change in their
   board time is not from mask removal. vLLM SiLU has 1 masked store.
-
-![vLLM masked loads/stores](fig/qwen_vllm_prefill_rv_masks.png)
-
-![TorchInductor masked loads/stores](fig/qwen_forward_prefill_rv_masks.png)
