@@ -27,5 +27,10 @@ export TRITON_LLVM_DEBUG_ONLY="analyze-tail-masks"
 #export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
 
 export TRITON_CPU_BACKEND=1
+KERNEL="unified"
+export TRITON_DUMP_DIR="$HERE/triton_dump_riscv/non_$KERNEL"
+python rvv_unified_attention_elf.py "$@"
+
+export TRITON_DUMP_DIR="$HERE/triton_dump_riscv/$KERNEL"
 export TRITON_VSETVL_CHUNK=1
 python rvv_unified_attention_elf.py "$@"

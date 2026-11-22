@@ -89,7 +89,7 @@ def _build_cpu_shared_object(name, src, srcdir, libraries, ccflags, source_kind)
         sysroot = os.environ.get("TRITON_RISCV_SYSROOT", os.path.join(toolchain_dir, "sysroot"))
         cpu_flags += [
             "--target=riscv64-unknown-linux-gnu",
-            "-march=rv64gcv",
+            "-march=rv64gcv_zvfhmin",  # must match kRISCV64Features in llvm.cc
             "-mabi=lp64d",
             f"--sysroot={sysroot}",
             f"--gcc-toolchain={toolchain_dir}",

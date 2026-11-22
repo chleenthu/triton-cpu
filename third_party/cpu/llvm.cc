@@ -81,7 +81,11 @@ const char *const kRISCV64CPU = "generic-rv64";
 // as a vector type on riscv64: the compiler does bf16 memory ops on i16
 // (promote_bf16_to_fp32) and bf16<->f32 conversions with integer ops
 // (decompose_bf16_conv).
-const char *const kRISCV64Features = "+m,+f,+d,+v";
+// zvfhmin (fp16 vector loads/stores and f16<->f32 converts) is implemented by
+// the X60. Without it LLVM cannot legalize fp16 vp.load/vp.store (the EVL
+// lowering of tail-masked fp16 loads), and fails with "Do not know how to
+// scalarize the result of this operator".
+const char *const kRISCV64Features = "+m,+f,+d,+v,+zvfhmin";
 
 std::string getHostCPUName() {
   return isNativeTarget() ? llvm::sys::getHostCPUName().str() : kRISCV64CPU;
@@ -235,7 +239,7 @@ bool osSupportsBF16() {
 // machines. LLVM may omit BF16 even when the operating system reports it.
 std::set<std::string> getCPUFeatures() {
   if (!isNativeTarget())
-    return {"+m", "+f", "+d", "+v", "+zvfbfmin"};
+    return {"+m", "+f", "+d", "+v", "+zvfhmin", "+zvfbfmin"};
 
   auto features = llvm::sys::getHostCPUFeatures();
 

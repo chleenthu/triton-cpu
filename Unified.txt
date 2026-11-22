@@ -1,0 +1,144 @@
+== kernel_unified_attention_2d_q128_seqlen128  grid=(65, 2) // TRITON_VSETVL_CHUNK=1 -> AnalyzeTailMasks runs on the TTIR; mask uses in walk order
+analyzeMask depth=0 {                            // cond of %dim_mask_40 = arith.select %dim_mask, %cst_13, %cst_12 (tl.where(offs_d < HEAD_SIZE, 1, 0))
+  is CmpIOp slt                                  // %dim_mask = arith.cmpi slt, %offs_d, %cst_14 : tensor<64xi32>
+  analyzeInt depth=1 {                           // range side: %offs_d
+    is MakeRangeOp                               // %offs_d = tt.make_range {start = 0, end = 64} : tensor<64xi32>
+    IntInfo Range axis=0 (scalar + i_0)          // %offs_d[i] = 0 + i
+      Const 0                                    // start = 0
+  }
+  analyzeInt depth=1 {                           // bound side: %cst_14
+    is dense constant                            // %cst_14 = arith.constant dense<64> : tensor<64xi32> (HEAD_SIZE)
+    IntInfo Splat                                // every element is 64
+      Const 64                                   // 64
+  }
+  Box rank=1                                     // box of %dim_mask (64): i < 64 - 0
+    axis 0:                                      // the only axis
+      Const 64                                   // 64 = full width (HEAD_SIZE == HEAD_SIZE_PADDED): all on; the only box found
+}
+analyzeMask depth=0 {                            // cond of %query_mask_0_43 = arith.select %query_mask_0_42, %cst_11, %cst_10 (query_mask_0)
+  is CmpIOp slt                                  // %query_mask_0_42 = arith.cmpi slt, %query_pos_22, %query_mask_0 : tensor<16xi32>
+  analyzeInt depth=1 {                           // range side: %query_pos_22 (query_pos)
+    is AddIOp                                    // %query_pos_22 = arith.addi %query_pos_21, %query_pos : tensor<16xi32>
+    analyzeInt depth=2 {                         // lhs: %query_pos_21
+      is SplatOp                                 // %query_pos_21 = tt.splat %0 : i32 -> tensor<16xi32>
+      IntInfo Splat                              // every element is %0
+        Leaf %0                                  // %0 = arith.muli %q_block_local_idx, %c2_i32 (q_block_local_idx * BLOCK_Q)
+    }
+    analyzeInt depth=2 {                         // rhs: %query_pos
+      failed                                     // %query_pos = arith.divsi %offs_m, %cst_15 (offs_m // 7): divsi has no case
+    }
+    failed                                       // rhs failed -> %query_pos_22 unknown
+  }
+  failed                                         // no range side -> bound side (%query_mask_0) not even analyzed
+}
+analyzeMask depth=0 {                            // cond of %query_mask_1_45 = arith.select %query_mask_1, %cst_11, %cst_10 (query_mask_1)
+  is CmpIOp slt                                  // %query_mask_1 = arith.cmpi slt, %query_offset_1_26, %cst_9 : tensor<16xi32>
+  analyzeInt depth=1 {                           // range side: %query_offset_1_26 (query_offset_1)
+    is AddIOp                                    // %query_offset_1_26 = arith.addi %query_offset_1_25, %query_offset_1_24
+    analyzeInt depth=2 {                         // lhs: %query_offset_1_25
+      is SplatOp                                 // %query_offset_1_25 = tt.splat %query_offset_1 : i32 -> tensor<16xi32>
+      IntInfo Splat                              // every element is %query_offset_1
+        Leaf %query_offset_1                     // %query_offset_1 = arith.muli %kv_head_idx, %c7_i32
+    }
+    analyzeInt depth=2 {                         // rhs: %query_offset_1_24
+      failed                                     // %query_offset_1_24 = arith.remsi %offs_m, %cst_15 (offs_m % 7): remsi has no case
+    }
+    failed                                       // %query_offset_1_26 unknown
+  }
+  failed                                         // no range side -> bound side (%cst_9 = 14) not analyzed
+}
+analyzeMask depth=0 {                            // mask of %Q_56 = tt.load %Q_55, %Q_53, %cst_2 (Q, 16x64)
+  is AndIOp                                      // %Q_53 = arith.andi %Q_50, %Q_52 : tensor<16x64xi1>
+  analyzeMask depth=1 {                          // lhs: %Q_50
+    is AndIOp                                    // %Q_50 = arith.andi %Q_48, %Q_49 : tensor<16x64xi1>
+    analyzeMask depth=2 {                        // lhs: %Q_48
+      is BroadcastOp                             // %Q_48 = tt.broadcast %Q : tensor<1x64xi1> -> tensor<16x64xi1>
+      analyzeMask depth=3 {                      // %Q
+        is ExpandDimsOp                          // %Q = tt.expand_dims %dim_mask_41 {axis = 0} : tensor<64xi1> -> tensor<1x64xi1>
+        analyzeMask depth=4 {                    // %dim_mask_41 (dim_mask)
+          is CmpIOp ne                           // %dim_mask_41 = arith.cmpi ne, %dim_mask_40, %cst_12 (.to(tl.int1) of the tl.where)
+          failed                                 // ne is not a range compare (only slt/sle/sgt/sge)
+        }
+        failed                                   // %Q unknown
+      }
+      failed                                     // %Q_48 unknown
+    }
+    failed                                       // lhs failed -> rhs %Q_49 (query_mask_0) not analyzed
+  }
+  failed                                         // lhs failed -> rhs %Q_52 (query_mask_1) not analyzed; Q load keeps its mask
+}
+analyzeMask depth=0 {                            // mask of %K_122 = tt.load %K_121, %K_120, %cst_1 (K, 64x32, in the tile loop)
+  is AndIOp                                      // %K_120 = arith.andi %K_73, %K_119 : tensor<64x32xi1>
+  analyzeMask depth=1 {                          // lhs: %K_73
+    is BroadcastOp                               // %K_73 = tt.broadcast %K : tensor<64x1xi1> -> tensor<64x32xi1>
+    analyzeMask depth=2 {                        // %K
+      is ExpandDimsOp                            // %K = tt.expand_dims %dim_mask_41 {axis = 1} : tensor<64xi1> -> tensor<64x1xi1>
+      analyzeMask depth=3 {                      // %dim_mask_41 (dim_mask)
+        is CmpIOp ne                             // %dim_mask_41 = arith.cmpi ne, %dim_mask_40, %cst_12
+        failed                                   // ne is not a range compare
+      }
+      failed                                     // %K unknown
+    }
+    failed                                       // %K_73 unknown
+  }
+  failed                                         // lhs failed -> rhs %K_119 (tile_mask, a real box) not analyzed
+}
+analyzeMask depth=0 {                            // mask of %V_127 = tt.load %V_126, %V_125, %cst_0 (V, 32x64, in the tile loop)
+  is AndIOp                                      // %V_125 = arith.andi %V, %V_124 : tensor<32x64xi1>
+  analyzeMask depth=1 {                          // lhs: %V
+    is BroadcastOp                               // %V = tt.broadcast %Q : tensor<1x64xi1> -> tensor<32x64xi1>
+    analyzeMask depth=2 {                        // %Q
+      is ExpandDimsOp                            // %Q = tt.expand_dims %dim_mask_41 {axis = 0} : tensor<64xi1> -> tensor<1x64xi1>
+      analyzeMask depth=3 {                      // %dim_mask_41 (dim_mask)
+        is CmpIOp ne                             // %dim_mask_41 = arith.cmpi ne, %dim_mask_40, %cst_12
+        failed                                   // ne is not a range compare
+      }
+      failed                                     // %Q unknown
+    }
+    failed                                       // %V unknown
+  }
+  failed                                         // lhs failed -> rhs %V_124 (tile_mask, a real box) not analyzed
+}
+analyzeMask depth=0 {                            // cond of %S_135 = arith.select %S_134, %S_133, %cst_3 (tl.where(..., S, -inf))
+  is AndIOp                                      // %S_134 = arith.andi %S_79, %seq_mask_130 : tensor<16x32xi1>
+  analyzeMask depth=1 {                          // lhs: %S_79
+    is BroadcastOp                               // %S_79 = tt.broadcast %S_78 : tensor<16x1xi1> -> tensor<16x32xi1>
+    analyzeMask depth=2 {                        // %S_78
+      is AndIOp                                  // %S_78 = arith.andi %Q_51, %Q_47 : tensor<16x1xi1> (query_mask_1 & query_mask_0)
+      analyzeMask depth=3 {                      // lhs: %Q_51
+        is ExpandDimsOp                          // %Q_51 = tt.expand_dims %query_mask_1_46 {axis = 1} : tensor<16xi1> -> tensor<16x1xi1>
+        analyzeMask depth=4 {                    // %query_mask_1_46 (query_mask_1)
+          is CmpIOp ne                           // %query_mask_1_46 = arith.cmpi ne, %query_mask_1_45, %cst_10
+          failed                                 // ne is not a range compare
+        }
+        failed                                   // %Q_51 unknown
+      }
+      failed                                     // lhs failed -> rhs %Q_47 (query_mask_0) not analyzed
+    }
+    failed                                       // %S_79 unknown
+  }
+  failed                                         // rhs %seq_mask_130 (causal sle, not box-shaped) not analyzed
+}
+analyzeMask depth=0 {                            // cond of %safe_m_j_136 = arith.select %safe_m_j, %m_j, %cst (softmax_step)
+  failed                                         // %safe_m_j = arith.cmpf ogt, %m_j, %cst_7: float compare, no case matches
+}
+analyzeMask depth=0 {                            // mask of tt.store %3, %4, %Q_53 (output, 16x64; same mask as the Q load)
+  is AndIOp                                      // %Q_53 = arith.andi %Q_50, %Q_52 : tensor<16x64xi1>
+  analyzeMask depth=1 {                          // lhs: %Q_50
+    is AndIOp                                    // %Q_50 = arith.andi %Q_48, %Q_49 : tensor<16x64xi1>
+    analyzeMask depth=2 {                        // lhs: %Q_48
+      is BroadcastOp                             // %Q_48 = tt.broadcast %Q : tensor<1x64xi1> -> tensor<16x64xi1>
+      analyzeMask depth=3 {                      // %Q
+        is ExpandDimsOp                          // %Q = tt.expand_dims %dim_mask_41 {axis = 0} : tensor<64xi1> -> tensor<1x64xi1>
+        analyzeMask depth=4 {                    // %dim_mask_41 (dim_mask)
+          is CmpIOp ne                           // %dim_mask_41 = arith.cmpi ne, %dim_mask_40, %cst_12
+          failed                                 // ne is not a range compare
+        }
+        failed                                   // %Q unknown
+      }
+      failed                                     // %Q_48 unknown
+    }
+    failed                                       // lhs failed -> rhs %Q_52 not analyzed
+  }
+  failed                                         // store keeps its mask
+}

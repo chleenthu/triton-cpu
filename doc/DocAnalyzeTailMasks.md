@@ -155,3 +155,93 @@ To make it work, you can either:
 - **Teach `analyzeMask` the bit-test forms:**
   - `(C & (1 << i)) != 0` with a constant `C = 2^n - 1` gives bound `n`, where `n` is the number of trailing 1 bits. It must check that `C + 1` is a power of two; 25 would be rejected.
   - `(((1 << k) - 1) & (1 << i)) != 0` and `((-1 << k) & (1 << i)) == 0` with a scalar `k` give bound `k`, valid only when `k` is provably within 0..bit width (for example behind a `min`/`max` clamp, as in the causal mask). Otherwise the shift is poison.
+
+## vLLM unified attention (2D): which masks become boxes
+
+`kernel_unified_attention_2d_q128_seqlen128` from `scripts/attn_repro` (`./run_riscv.sh` with `TRITON_LLVM_DEBUG_ONLY=analyze-tail-masks`), with the trace annotated line by line in `Unified.txt`. The pass visits the mask uses in walk order:
+
+| # | Mask use | Result | Why it stops |
+|---|---|---|---|
+| 1 | `select` of `tl.where(offs_d < HEAD_SIZE, 1, 0)` | Box 64 | Full width, so the mask is all on |
+| 2 | `select` of query_mask_0 | failed | `query_pos = offs_m // 7`: `divsi` isn't handled |
+| 3 | `select` of query_mask_1 | failed | `offs_m % 7`: `remsi` isn't handled |
+| 4 | Q load (`%Q_53`) | failed | `dim_mask` is `cmpi ne` |
+| 5 | K load | failed | `cmpi ne`; the `tile_mask` side is never reached |
+| 6 | V load | failed | `cmpi ne`; the `tile_mask` side is never reached |
+| 7 | Causal `select` (`%S_134`) | failed | `cmpi ne` through query_mask_1 |
+| 8 | `select` of `safe_m_j` | failed | `cmpf ogt`, a float compare |
+| 9 | Output store (same mask `%Q_53` as the Q load) | failed | Same as #4 |
+
+vLLM writes its masks as `tl.where(cond, 1, 0).to(tl.int1)`, which reaches the TTIR as `arith.select %c, dense<1>, dense<0>` followed by `arith.cmpi ne, ..., dense<0>`. An `andi` is all or nothing: if one side fails, the other side is never analyzed. That is why K and V lose `tile_mask` even though it is a box.
+
+### Current table
+
+All nine mask uses, with the `cmpi`-of-`select` case in place (from the board run's trace):
+
+| # | Mask use | Result | Why |
+|---|---|---|---|
+| 1 | `select` of `tl.where(offs_d < HEAD_SIZE, 1, 0)` | Box 64 | Full width, so the mask is all on |
+| 2 | `select` of query_mask_0 | failed | `query_pos = offs_m // 7`: `divsi` isn't handled |
+| 3 | `select` of query_mask_1 | failed | `offs_m % 7`: `remsi` isn't handled |
+| 4 | Q load (`%Q_53`) | failed | `dim_mask` now gives a box, but query_mask_0 fails on `divsi`, so the `andi` fails |
+| 5 | K load | **Box rank 2** | `dim_mask` (64, full) × `tile_mask` |
+| 6 | V load | **Box rank 2** | `tile_mask` × `dim_mask` (64, full) |
+| 7 | Causal `select` (`%S_134`) | failed | query_mask_1 fails on `remsi`; the causal `sle` side is never reached |
+| 8 | `select` of `safe_m_j` | failed | `cmpf ogt`, a float compare |
+| 9 | Output store (same mask `%Q_53` as the Q load) | failed | Same as #4 |
+
+In #4 and #9, `dim_mask` resolves through the `tail_mask` that #1 inserted ("is TailMaskOp" in the trace). What still stops these masks is the `divsi`/`remsi` from vLLM's `// num_queries_per_kv` and `% num_queries_per_kv` indexing, not the `cmpi ne`.
+
+### After handling `divsi` and `remsi`
+
+`analyzeInt` now also describes `scalar + (start + i) / div`. Dividing a non-negative range by a positive constant `C` keeps it monotone, so `scalar + (start + i) / C < n` becomes `i < C * (n - scalar) - start` and the mask stays a box. `remsi` by a positive constant is handled only when it never wraps around (`start + size - 1 < C`), where `x % C` is just `x`. A wrapping remainder repeats every `C` elements, so it isn't a prefix.
+
+| # | Mask use | Result | Why |
+|---|---|---|---|
+| 1 | `select` of `tl.where(offs_d < HEAD_SIZE, 1, 0)` | Box 64 | Full width, so the mask is all on |
+| 2 | `select` of query_mask_0 | **Box rank 1** | `query_pos = %0 + i // 7` gives `i < 7 * (cur_batch_query_len - %0)` |
+| 3 | `select` of query_mask_1 | failed | `offs_m % 7` over 16 rows wraps around |
+| 4 | Q load (`%Q_53`) | failed | query_mask_1 is in the `andi` |
+| 5 | K load | Box rank 2 | `dim_mask` (64, full) × `tile_mask` |
+| 6 | V load | Box rank 2 | `tile_mask` × `dim_mask` (64, full) |
+| 7 | Causal `select` (`%S_134`) | failed | query_mask_1 |
+| 8 | `select` of `safe_m_j` | failed | `cmpf ogt`, a float compare |
+| 9 | Output store (same mask `%Q_53` as the Q load) | failed | Same as #4 |
+
+query_mask_1 is `h * 7 + i % 7 < 14`. It is all on for the two KV heads of this model, but the pass cannot know `h` at compile time, and in general the pattern repeats instead of forming a prefix. Getting the Q load, the output store and the causal `select` past it would need a mask that is not a single box.
+
+### After handling a wrapping `remsi` in a compare
+
+A wrapping `remsi` no longer fails: `analyzeInt` describes it as `scalar + (start + i) % C`, a value in `[scalar, scalar + C)`. In a `slt`/`sgt` compare against a bound `n`, if both `n` and `scalar` are provably multiples of `C` (`n = C*k`, `scalar = C*h`), then `C*h + r < C*k` holds for every `r` in `[0, C)` exactly when `h < k`. The mask is all on or all off, which is the box `k - h >= 1 ? size : 0` along that axis. `sle`/`sge` are not handled: with `k == h`, only `r == 0` would be on. `exactQuotient` proves the multiple of `C` for constants, an `arith.muli` by a constant multiple of `C`, and sums, differences and constant multiples of those.
+
+| # | Mask use | Result | Why |
+|---|---|---|---|
+| 1 | `select` of `tl.where(offs_d < HEAD_SIZE, 1, 0)` | Box 64 | Full width, so the mask is all on |
+| 2 | `select` of query_mask_0 | Box rank 1 | `i < 7 * (cur_batch_query_len - %0)` |
+| 3 | `select` of query_mask_1 | **Box rank 1** | `kv_head_idx*7 + i % 7 < 14` gives `kv_head_idx < 2 ? 16 : 0` |
+| 4 | Q load (`%Q_53`) | **Box rank 2** | `dim_mask` × query_mask_0 × query_mask_1 |
+| 5 | K load | Box rank 2 | `dim_mask` (64, full) × `tile_mask` |
+| 6 | V load | Box rank 2 | `tile_mask` × `dim_mask` (64, full) |
+| 7 | Causal `select` (`%S_134`) | failed | The causal `sle` bound depends on the row, so it is not a box |
+| 8 | `select` of `safe_m_j` | failed | `cmpf ogt`, a float compare |
+| 9 | Output store (same mask `%Q_53` as the Q load) | **Box rank 2** | Same as #4 |
+
+On the board (LMUL=1, 20 iterations, 3 warmup) the kernel takes 52.5 ms, against 52.6 ms before. The Q load and the output store run once per program, outside the KV loop, so boxing them barely changes the time. The remaining cost is in the loop: the K/V loads (already boxes) and the causal `select` (#7).
+
+### Prototype: per-row bound for the causal `select`
+
+The causal mask is not one box, but every row of it is a prefix: element `(i, j)` is on iff `seq_offset + j <= context_len + query_pos(i)`, so the key bound depends on the row. `analyzeRowBound` describes such a mask as a box plus one per-row bound: element `(i_0, ..., i_{n-1})` is on iff it is in the box and `i_col < base + (start + i_row) / div`. It comes from a compare whose range side runs along one axis (`col`) while its bound side runs along another (`row`, which may use the `divsi` form), and an `andi` combines it with boxes. For now it only runs under `-debug-only=analyze-tail-masks`, for masks `analyzeMask` rejects, and does not change the IR.
+
+| # | Mask use | Result | Why |
+|---|---|---|---|
+| 1 | `select` of `tl.where(offs_d < HEAD_SIZE, 1, 0)` | Box 64 | Full width, so the mask is all on |
+| 2 | `select` of query_mask_0 | Box rank 1 | `i < 7 * (cur_batch_query_len - %0)` |
+| 3 | `select` of query_mask_1 | Box rank 1 | `kv_head_idx < 2 ? 16 : 0` |
+| 4 | Q load (`%Q_53`) | Box rank 2 | `dim_mask` × query_mask_0 × query_mask_1 |
+| 5 | K load | Box rank 2 | `dim_mask` (64, full) × `tile_mask` |
+| 6 | V load | Box rank 2 | `tile_mask` × `dim_mask` (64, full) |
+| 7 | Causal `select` (`%S_134`) | **Box + RowBound** (prototype, trace only) | Rows: `min(query_mask_1, query_mask_0)`; keys: `j < context_len + %0 - seq_offset + 1 + i // 7` |
+| 8 | `select` of `safe_m_j` | failed | `cmpf ogt`, a float compare (also fails in `analyzeRowBound`) |
+| 9 | Output store (same mask `%Q_53` as the Q load) | Box rank 2 | Same as #4 |
+
+The `i // 7` is the GQA structure: rows 0–6, 7–13 and 14–15 each share one key bound, one more key per token. Using #7 would still need a `tail_mask` form with a per-row bound and a per-row lowering of the `select`.

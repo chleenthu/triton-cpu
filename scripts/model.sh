@@ -13,7 +13,7 @@ export TORCHINDUCTOR_CACHE_DIR="$HERE/inductor_cache"
 rm -rf "$TORCHINDUCTOR_CACHE_DIR"
 #export VLLM_CACHE_ROOT="$TORCHINDUCTOR_CACHE_DIR"
 
-export CC=~/llvm-project/install/bin/clang
+export CC=~/llvm-project/install-rel/bin/clang
 export TRITON_LOCAL_LIBOMP_PATH=$HOME/.triton-native-libomp
 export OMP_NUM_THREADS=8
 export VLLM_CPU_KVCACHE_SPACE=4

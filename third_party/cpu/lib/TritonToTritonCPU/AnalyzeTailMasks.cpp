@@ -10,12 +10,18 @@
 // A mask is a box if element (i_0, ..., i_{n-1}) is on iff i_d < B_d for all
 // d. The analysis builds B_d as a small expression over scalars, from:
 //   arith.cmpi slt/sle/sgt/sge  of (range + offset) against a splat bound
+//   arith.cmpi of arith.select %c, A, B against Z (constant splats) that
+//                               reduces to %c, e.g. tl.where(c, 1, 0) != 0
 //   arith.andi                  per-dimension min
 //   arith.ori                   per-dimension max where the other dims agree
 //   tt.splat (i1)               all-on or all-off
 //   tt.expand_dims, tt.broadcast, tt.trans, arith.constant
 // with index tensors described through tt.make_range, tt.splat,
-// tt.expand_dims, tt.broadcast, tt.trans, arith.addi / arith.subi and
+// tt.expand_dims, tt.broadcast, tt.trans, arith.addi / arith.subi,
+// arith.divsi by a positive constant (range // C stays monotone, so
+// base + (s + i) // C < n  <=>  i < C * (n - base) - s), arith.remsi by a
+// positive constant (the identity when it never wraps; when it wraps, a
+// compare  C*h + (s + i) % C < C*k  is uniform: all on iff h < k), and
 // arith.constant. The analysis itself creates no IR; the bounds are only
 // materialized for masks that are boxes.
 
@@ -59,7 +65,7 @@ constexpr int kMaxDepth = 32;
 struct Expr;
 using ExprPtr = std::shared_ptr<const Expr>;
 struct Expr {
-  enum Kind { Const, Leaf, Add, Sub, Min, Max, Select, AtLeastOne } kind;
+  enum Kind { Const, Leaf, Add, Sub, Min, Max, Select, AtLeastOne, Mul } kind;
   int64_t cst = 0;  // Const
   Value leaf;       // Leaf: an i32 scalar, or i1 for a Select condition
   ExprPtr a, b;     // operands (Select: a = then, b = else)
@@ -68,8 +74,9 @@ struct Expr {
 
 const char *kindName(Expr::Kind k) {
   static constexpr const char *names[] = {
-      "Const", "Leaf", "Add", "Sub", "Min", "Max", "Select", "AtLeastOne"};
-  static_assert(std::size(names) == Expr::AtLeastOne + 1,
+      "Const", "Leaf", "Add", "Sub", "Min", "Max", "Select", "AtLeastOne",
+      "Mul"};
+  static_assert(std::size(names) == Expr::Mul + 1,
                "kindName out of sync with Expr::Kind");
   return unsigned(k) < std::size(names) ? names[k] : "<unknown>";
 }
@@ -138,10 +145,14 @@ ExprPtr mkBin(Expr::Kind k, ExprPtr a, ExprPtr b) {
       return mkConst(std::min(a->cst, b->cst));
     case Expr::Max:
       return mkConst(std::max(a->cst, b->cst));
+    case Expr::Mul:
+      return mkConst(a->cst * b->cst);
     default:
       break;
     }
   }
+  if (k == Expr::Mul && b->kind == Expr::Const && b->cst == 1)
+    return a;
   if (k == Expr::Add && b->kind == Expr::Const && b->cst == 0)
     return a;
   if (k == Expr::Sub && b->kind == Expr::Const && b->cst == 0)
@@ -230,18 +241,34 @@ bool provablyLE(const ExprPtr &x, const ExprPtr &y, int64_t size) {
 
 // Integer tensor description.
 //  - Splat: every element is `scalar`.
-//  - Range: element (i_0, ..., i_{n-1}) is `scalar + i_axis`.
+//  - Range: element (i_0, ..., i_{n-1}) is `scalar + (start + i_axis) / div`,
+//    with constants start >= 0 and div >= 1 (from arith.divsi; the dividend
+//    is never negative, so the division is a floor). With div == 1, start is
+//    0 and this is the plain `scalar + i_axis`.
+//    With mod > 0 (from a wrapping arith.remsi), element is instead
+//    `scalar + (start + i_axis) % mod` (div is then 1), a value in
+//    [scalar, scalar + mod).
 struct IntInfo {
   bool isRange = false;
   int64_t axis = 0;
   ExprPtr scalar;
+  int64_t start = 0;
+  int64_t div = 1;
+  int64_t mod = 0;
+  bool isPlain() const { return div == 1 && mod == 0; }
 };
 
 LLVM_ATTRIBUTE_UNUSED void printIntInfo(const IntInfo &x,
                                         llvm::raw_ostream &os = llvm::dbgs(),
                                         unsigned indent = 0) {
   os.indent(indent);
-  if (x.isRange)
+  if (x.isRange && x.mod != 0)
+    os << "IntInfo Range axis=" << x.axis << " (scalar + (" << x.start
+       << " + i_" << x.axis << ") % " << x.mod << ")\n";
+  else if (x.isRange && x.div != 1)
+    os << "IntInfo Range axis=" << x.axis << " (scalar + (" << x.start
+       << " + i_" << x.axis << ") / " << x.div << ")\n";
+  else if (x.isRange)
     os << "IntInfo Range axis=" << x.axis << " (scalar + i_" << x.axis
        << ")\n";
   else
@@ -254,6 +281,14 @@ std::optional<SmallVector<int64_t>> getShape(Value v) {
   if (!ty)
     return std::nullopt;
   return SmallVector<int64_t>(ty.getShape());
+}
+
+// The value of a constant integer splat tensor.
+std::optional<APInt> splatConstInt(Value v) {
+  DenseIntElementsAttr dense;
+  if (!matchPattern(v, m_Constant(&dense)) || !dense.isSplat())
+    return std::nullopt;
+  return dense.getSplatValue<APInt>();
 }
 
 // Index tensors whose IntInfo is already known: loop-carried index tensors
@@ -276,6 +311,48 @@ ExprPtr scalarExpr(Value v, int depth = 0) {
                  scalarExpr(def->getOperand(0), depth + 1),
                  scalarExpr(def->getOperand(1), depth + 1));
   return mkLeaf(v);
+}
+
+// q with e == C * q for an expression that is provably a multiple of C > 0:
+// constants divisible by C, arith.muli of a leaf by a constant multiple of C,
+// and sums / differences / constant multiples of those.
+std::optional<ExprPtr> exactQuotient(const ExprPtr &e, int64_t C,
+                                     int depth = 0) {
+  if (depth > kMaxDepth)
+    return std::nullopt;
+  switch (e->kind) {
+  case Expr::Const:
+    if (e->cst % C != 0)
+      return std::nullopt;
+    return mkConst(e->cst / C);
+  case Expr::Add:
+  case Expr::Sub: {
+    auto a = exactQuotient(e->a, C, depth + 1);
+    auto b = a ? exactQuotient(e->b, C, depth + 1) : std::nullopt;
+    if (!b)
+      return std::nullopt;
+    return mkBin(e->kind, *a, *b);
+  }
+  case Expr::Mul:
+    if (e->b->kind == Expr::Const && e->b->cst % C == 0)
+      return mkBin(Expr::Mul, e->a, mkConst(e->b->cst / C));
+    return std::nullopt;
+  case Expr::Leaf: {
+    auto mul = e->leaf.getDefiningOp<arith::MulIOp>();
+    if (!mul)
+      return std::nullopt;
+    for (int k = 0; k < 2; ++k) {
+      APInt c;
+      if (matchPattern(mul->getOperand(k), m_ConstantInt(&c)) &&
+          c.getSExtValue() % C == 0)
+        return mkBin(Expr::Mul, scalarExpr(mul->getOperand(1 - k)),
+                     mkConst(c.getSExtValue() / C));
+    }
+    return std::nullopt;
+  }
+  default:
+    return std::nullopt;
+  }
 }
 
 std::optional<IntInfo> analyzeInt(Value v, int depth);
@@ -341,7 +418,8 @@ std::optional<IntInfo> analyzeIntImpl(Value v, int depth) {
     auto e = t ? analyzeInt(ifOp.elseYield().getOperand(idx), depth + 1)
                : std::nullopt;
     if (!e || t->isRange != e->isRange ||
-        (t->isRange && t->axis != e->axis))
+        (t->isRange && t->axis != e->axis) || t->start != e->start ||
+        t->div != e->div || t->mod != e->mod)
       return std::nullopt;
     IntInfo res = *t;
     if (!sameExpr(t->scalar, e->scalar))
@@ -372,8 +450,18 @@ std::optional<IntInfo> analyzeIntImpl(Value v, int depth) {
     // A size-1 axis holds a single value: the broadcast result is a splat
     // along it.
     if (src && src->isRange &&
-        cast<RankedTensorType>(bc.getSrc().getType()).getDimSize(src->axis) == 1)
+        cast<RankedTensorType>(bc.getSrc().getType()).getDimSize(src->axis) ==
+            1) {
+      // The single element along it is scalar + start / div.
       src->isRange = false;
+      src->scalar =
+          mkBin(Expr::Add, src->scalar,
+                mkConst(src->mod ? src->start % src->mod
+                                 : src->start / src->div));
+      src->start = 0;
+      src->div = 1;
+      src->mod = 0;
+    }
     return src;
   }
   if (auto trans = dyn_cast<TransOp>(def)) {
@@ -399,6 +487,47 @@ std::optional<IntInfo> analyzeIntImpl(Value v, int depth) {
       return std::nullopt;
     IntInfo res = lhs->isRange ? *lhs : *rhs;
     res.scalar = mkBin(isSub ? Expr::Sub : Expr::Add, lhs->scalar, rhs->scalar);
+    return res;
+  }
+  // x / C and x % C by a positive constant splat C, for a non-negative x:
+  //   (s + (start + i) / div) / C = (start + s * div + i) / (div * C)
+  // (floor division of non-negative values composes). The remainder is
+  // handled only when it never wraps, i.e. it is the identity: a wrapping
+  // remainder is periodic, not a prefix.
+  if (isa<arith::DivSIOp, arith::RemSIOp>(def)) {
+    bool isDiv = isa<arith::DivSIOp>(def);
+    note(isDiv ? "is DivSIOp" : "is RemSIOp");
+    auto c = splatConstInt(def->getOperand(1));
+    if (!c || c->getSExtValue() <= 0)
+      return std::nullopt;
+    int64_t C = c->getSExtValue();
+    auto x = analyzeInt(def->getOperand(0), depth + 1);
+    // The constant part of x must be known and non-negative, so the
+    // dividend is non-negative (signed division truncates toward zero).
+    if (!x || x->scalar->kind != Expr::Const || x->scalar->cst < 0 ||
+        x->mod != 0)
+      return std::nullopt;
+    int64_t s = x->scalar->cst;
+    if (!x->isRange)
+      return IntInfo{false, 0, mkConst(isDiv ? s / C : s % C)};
+    if (isDiv) {
+      IntInfo res = *x;
+      res.scalar = mkConst(0);
+      res.start = x->start + s * x->div;
+      res.div = x->div * C;
+      return res;
+    }
+    if (x->div != 1)
+      return std::nullopt;
+    // Remainder that never wraps (s + i < C over the whole axis): identity.
+    if (s + (*shape)[x->axis] - 1 < C)
+      return x;
+    // Wrapping remainder: (s + i) % C. Only a compare against a bound that
+    // differs from the scalar by a multiple of C makes a box of it (cmpi).
+    IntInfo res = *x;
+    res.scalar = mkConst(0);
+    res.start = s;
+    res.mod = C;
     return res;
   }
   return std::nullopt;
@@ -636,6 +765,34 @@ std::optional<Box> analyzeMaskImpl(Value mask, int depth) {
   if (auto cmp = dyn_cast<arith::CmpIOp>(def)) {
     note(("is CmpIOp " + arith::stringifyCmpIPredicate(cmp.getPredicate()))
              .str());
+    // A compare that only re-tests an i1 condition, e.g. the
+    // tl.where(cond, 1, 0).to(tl.int1) Triton emits as
+    //   %s = arith.select %c, dense<1>, dense<0>
+    //   %m = arith.cmpi ne, %s, dense<0>
+    // Every element is c ? (A pred Z) : (B pred Z) for constant splats A, B
+    // (the select's values) and Z (the other operand), so the mask is c when
+    // the then-case holds and the else-case does not. (The opposite would be
+    // !c, which is not a box.)
+    for (bool selOnLhs : {true, false}) {
+      Value selSide = selOnLhs ? cmp.getLhs() : cmp.getRhs();
+      Value cstSide = selOnLhs ? cmp.getRhs() : cmp.getLhs();
+      auto sel = selSide.getDefiningOp<arith::SelectOp>();
+      if (!sel || !isa<RankedTensorType>(sel.getCondition().getType()))
+        continue;
+      auto a = splatConstInt(sel.getTrueValue());
+      auto b = splatConstInt(sel.getFalseValue());
+      auto z = splatConstInt(cstSide);
+      if (!a || !b || !z)
+        continue;
+      auto test = [&](const APInt &x) {
+        return selOnLhs ? arith::applyCmpPredicate(cmp.getPredicate(), x, *z)
+                        : arith::applyCmpPredicate(cmp.getPredicate(), *z, x);
+      };
+      if (test(*a) && !test(*b)) {
+        note("is test of select condition");
+        return analyzeMask(sel.getCondition(), depth + 1);
+      }
+    }
     // range + off <  n   <=>  i_axis < n - off
     // range + off <= n   <=>  i_axis < n - off + 1
     // (and the mirrored sgt / sge). Signed only: an unsigned compare stops
@@ -667,9 +824,31 @@ std::optional<Box> analyzeMaskImpl(Value mask, int depth) {
       // Scalar compare broadcast to every element: all on or all off.
       return std::nullopt;
     }
-    box[range->axis] =
-        mkBin(Expr::Add, mkBin(Expr::Sub, bound->scalar, range->scalar),
-              mkConst(extra));
+    if (range->mod != 0) {
+      // scalar + r < n with r = (start + i) % C in [0, C). If n - scalar is
+      // C * q, this holds for every r iff q >= 1 and for none iff q <= 0:
+      // all on or all off, the box (q >= 1 ? size : 0) along the axis. Only
+      // for slt / sgt: with sle / sge and q == 0 just r == 0 is on.
+      if (extra != 0)
+        return std::nullopt;
+      auto qn = exactQuotient(bound->scalar, range->mod);
+      auto qs = qn ? exactQuotient(range->scalar, range->mod) : std::nullopt;
+      if (!qs)
+        return std::nullopt;
+      note("is uniform remainder compare");
+      box[range->axis] = mkAtLeastOne(mkBin(Expr::Sub, *qn, *qs),
+                                      (*shape)[range->axis]);
+      return box;
+    }
+    // scalar + (start + i) / div < m  <=>  start + i < div * m
+    // (floor division, start + i >= 0), with m = n - scalar (+ 1 for sle).
+    box[range->axis] = mkBin(
+        Expr::Sub,
+        mkBin(Expr::Mul,
+              mkBin(Expr::Add, mkBin(Expr::Sub, bound->scalar, range->scalar),
+                    mkConst(extra)),
+              mkConst(range->div)),
+        mkConst(range->start));
     return box;
   }
   return std::nullopt;
@@ -737,6 +916,9 @@ Value materialize(OpBuilder &b, Location loc, const ExprPtr &e) {
   case Expr::Max:
     return arith::MaxSIOp::create(b, loc, materialize(b, loc, e->a),
                                   materialize(b, loc, e->b));
+  case Expr::Mul:
+    return arith::MulIOp::create(b, loc, materialize(b, loc, e->a),
+                                 materialize(b, loc, e->b));
   case Expr::Select:
     return arith::SelectOp::create(b, loc, e->leaf, materialize(b, loc, e->a),
                                    materialize(b, loc, e->b));
@@ -867,7 +1049,7 @@ struct Carried {
     }
     auto info = analyzeInt(v, 0);
     if (!info || info->isRange != shape->isRange ||
-        (info->isRange && info->axis != shape->axis))
+        (info->isRange && info->axis != shape->axis) || !info->isPlain())
       return std::nullopt;
     return SmallVector<ExprPtr>{info->scalar};
   }
@@ -1049,7 +1231,9 @@ SmallVector<Carried> carryLoopValues(ArrayRef<OpOperand *> uses,
     for (Carried &c : cs) {
       if (c.isMask || c.shape)
         continue;
-      if (auto info = analyzeInt(c.sources()[0].first, 0)) {
+      auto info = analyzeInt(c.sources()[0].first, 0);
+      // Only the plain scalar + i form is carried (the scalar alone).
+      if (info && info->isPlain()) {
         c.shape = info;
         progress = true;
       }
