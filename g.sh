@@ -1,34 +1,24 @@
 #!/bin/bash
 cd ~/triton-cpu
-export LLVM_BUILD_DIR=$HOME/llvm-project/install
 source .venv/bin/activate
-# Default symbol visibility: required with shared MLIR libs, else trait TypeIDs
-# mismatch between libtriton and libMLIR (ModuleOp loses its SymbolTable trait).
-export TRITON_EXT_ENABLED=1
-# Always build with the project's clang (never gcc). It has no default target
-# triple, so give CMake's compiler check an explicit host target. Link with lld
-# and compile through ccache (picked up from PATH). Build with the Release clang
-# (install-rel): the Debug one in install takes ~130 s per MLIR source file. Triton
-# still links against the Debug LLVM/MLIR in $LLVM_BUILD_DIR.
-export CC=$HOME/llvm-project/install-rel/bin/clang
-export CXX=$HOME/llvm-project/install-rel/bin/clang++
-export CFLAGS="--target=x86_64-unknown-linux-gnu"
-export CXXFLAGS="--target=x86_64-unknown-linux-gnu"
-export LDFLAGS="-fuse-ld=lld"
-export PATH=$HOME/ccache/install/bin:$PATH
-# TRITON_BUILD_NVIDIA_GSAN_RUNTIME=0: the GSan runtime is compiled for sm_80,
-# which needs NVPTX in LLVM (ours is X86;RISCV only).
+export LLVM_BUILD_DIR=$HOME/llvm-project/install-rel
+#export TRITON_EXT_ENABLED=1
+#export CC=$HOME/llvm-project/install-rel/bin/clang
+#export CXX=$HOME/llvm-project/install-rel/bin/clang++
+#export CFLAGS="--target=x86_64-unknown-linux-gnu"
+#export CXXFLAGS="--target=x86_64-unknown-linux-gnu"
+#export LDFLAGS="-fuse-ld=lld"
+#export PATH=$HOME/ccache/install/bin:$PATH
+#export TRITON_SLEEF_SOURCE_DIR=$PWD/third_party/sleef
 #JSON_SYSPATH=$HOME/.triton/json TRITON_OFFLINE_BUILD=1 TRITON_BUILD_NVIDIA_GSAN_RUNTIME=0 \
 #  LLVM_INCLUDE_DIRS=$LLVM_BUILD_DIR/include \
 #  LLVM_LIBRARY_DIR=$LLVM_BUILD_DIR/lib \
 #  LLVM_SYSPATH=$LLVM_BUILD_DIR \
-#  pip install -vvv -e .
-# Faster incremental C++ rebuild (after the first full pip build):
+#  pip install --ignore-requires-python -vvv -e .
 ninja -C build/cmake.linux-x86_64-cpython-3.10 libtriton.so
 
-export CC=$HOME/llvm-project/install/bin/clang
 source .venv/bin/activate
-
+export CC=$HOME/llvm-project/install-rel/bin/clang
 export TORCHINDUCTOR_CACHE_DIR=$HOME/torchinductor_cache
 export TRITON_LOCAL_LIBOMP_PATH=$HOME/.triton-native-libomp
 
@@ -36,10 +26,9 @@ export TRITON_LOCAL_LIBOMP_PATH=$HOME/.triton-native-libomp
 #export TRITON_BENCH_ITERS=200
 export OMP_NUM_THREADS=8
 export TRITON_RISCV_LMUL=8
-export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
-# -debug-only for the MLIR passes (comma-separated).
+#export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
 #export TRITON_LLVM_DEBUG_ONLY="analyze-tail-masks,tail-mask-to-evl,convert-memory-ops"
-export TRITON_LLVM_DEBUG_ONLY="convert-memory-ops"
+#export TRITON_LLVM_DEBUG_ONLY="convert-memory-ops,expandpseudos"
 
 cd python/tutorials/cpu
 KERNEL=${KERNEL:-mask_branch}
@@ -49,10 +38,8 @@ export TRITON_DUMP_DIR=artifacts/dump/$KERNEL
 export TRITON_CPU_BACKEND=1
 #export TRITON_CPU_FLIP_TO_SHUFFLE=1
 export TRITON_VSETVL_CHUNK=1
-#python python/tutorials/cpu/rvv_03-matrix-multiplication_elf.py
 python rvv_"$KERNEL"_elf.py
 
 export TRITON_DUMP_DIR=artifacts/dump/$KERNEL
 export TRITON_VSETVL_REDUCE=1
-#python python/tutorials/cpu/rvv_permute_elf.py
-#python python/tutorials/cpu/rvv_01-vector-add_elf.py
+#python python/tutorials/cpu/rvv_03-matrix-multiplication_elf.py

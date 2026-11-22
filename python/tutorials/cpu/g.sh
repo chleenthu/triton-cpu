@@ -1,6 +1,6 @@
 #!/bin/bash
 cd ~/triton-cpu
-export LLVM_BUILD_DIR=$HOME/llvm-project/install
+export LLVM_BUILD_DIR=$HOME/llvm-project/install-rel
 source .venv/bin/activate
 # Default symbol visibility: required with shared MLIR libs, else trait TypeIDs
 # mismatch between libtriton and libMLIR (ModuleOp loses its SymbolTable trait).
@@ -16,15 +16,18 @@ export CFLAGS="--target=x86_64-unknown-linux-gnu"
 export CXXFLAGS="--target=x86_64-unknown-linux-gnu"
 export LDFLAGS="-fuse-ld=lld"
 export PATH=$HOME/ccache/install/bin:$PATH
+#TRITON_SLEEF_SOURCE_DIR=$PWD/third_party/sleef \
 #JSON_SYSPATH=$HOME/.triton/json TRITON_OFFLINE_BUILD=1 \
 #  LLVM_INCLUDE_DIRS=$LLVM_BUILD_DIR/include \
 #  LLVM_LIBRARY_DIR=$LLVM_BUILD_DIR/lib \
 #  LLVM_SYSPATH=$LLVM_BUILD_DIR \
-#  pip install --no-build-isolation -vvv -e .
+#  pip install --no-build-isolation --ignore-requires-python -vvv -e .
+# (--ignore-requires-python: setup.py wants Python>=3.11 since the upstream merge; .venv is 3.10.
+#  For a full reconfigure, e.g. after switching LLVM, delete CMakeCache.txt and CMakeFiles/ in the build dir first.)
 # Faster incremental C++ rebuild (after the first full pip build):
 ninja -C build/cmake.linux-x86_64-cpython-3.10 libtriton.so
 
-export CC=$HOME/llvm-project/install/bin/clang
+export CC=$HOME/llvm-project/install-rel/bin/clang
 source .venv/bin/activate
 
 export TORCHINDUCTOR_CACHE_DIR=$HOME/torchinductor_cache
@@ -35,7 +38,7 @@ export TRITON_LOCAL_LIBOMP_PATH=$HOME/.triton-native-libomp
 export OMP_NUM_THREADS=8
 export TRITON_RISCV_LMUL=8
 export TRITON_RISCV_LLVM_ARGS="-debug-only=expandpseudos"
-#export TRITON_LLVM_DEBUG_ONLY="analyze-tail-masks"
+export TRITON_LLVM_DEBUG_ONLY="analyze-tail-masks"
 
 cd python/tutorials/cpu
 KERNEL=mask_branch

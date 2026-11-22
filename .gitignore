@@ -112,3 +112,8 @@ dump*/
 scripts/inductor_cache*/
 scripts/triton_cache*/
 scripts/triton_dump*/
+scripts/attn_repro/*.log
+scripts/attn_repro/*.pt
+scripts/attn_repro/triton_cache*/
+scripts/attn_repro/triton_dump*/
+scripts/attn_repro/captured*/

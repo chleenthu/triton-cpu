@@ -349,7 +349,9 @@ class CPUBackend(BaseBackend):
         #if options.extern_libs:
         #    paths = [path for (name, path) in options.extern_libs]
         #   llvm.link_extern_libs(llvm_mod, paths)
-        llvm.optimize_module(llvm_mod, llvm.OPTIMIZE_O3)
+        # Target LLVM options (riscv LMUL, vector-bits-min, tail folding) must be
+        # passed per run: LLVM option scopes reset them on exit.
+        llvm.optimize_module(llvm_mod, llvm.OPTIMIZE_O3, flags=cpu.llvm.get_llvm_flags())
         # Get some metadata
         metadata["shared"] = 0
         metadata["name"] = kernel_names[0]

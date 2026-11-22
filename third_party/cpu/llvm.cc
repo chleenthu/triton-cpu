@@ -1,5 +1,7 @@
+#include "triton/Tools/LLVMOptions.h"
 #include "triton/Tools/Sys/GetEnv.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -31,6 +33,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/set.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include <memory>
 #include <mutex>
@@ -84,42 +87,98 @@ std::string getHostCPUName() {
   return isNativeTarget() ? llvm::sys::getHostCPUName().str() : kRISCV64CPU;
 }
 
-// LMUL is taken from TRITON_RISCV_LMUL (1, 2, 4 or 8; default 8).
+// LMUL is taken from TRITON_RISCV_LMUL (1, 2, 4 or 8; default 1). LMUL=1 was
+// ~19% faster than 8 on the vLLM unified-attention 2D kernel on the K1 board.
 std::string getRISCVLMUL() {
   std::string lmul = mlir::triton::tools::getStrEnv("TRITON_RISCV_LMUL");
   if (lmul.empty())
-    return "8";
+    return "1";
   if (lmul != "1" && lmul != "2" && lmul != "4" && lmul != "8")
     throw std::runtime_error("TRITON_RISCV_LMUL must be one of 1, 2, 4, 8; got '" +
                              lmul + "'");
   return lmul;
 }
 
-void setRISCV64CodegenOptions() {
-  const std::string regLMUL = "-riscv-v-register-bit-width-lmul=" + getRISCVLMUL();
-  // Also cap the LMUL of the fixed-length vectors Triton emits; the flag above
-  // only affects the autovectorizers.
-  const std::string fixedLMUL =
-      "-riscv-v-fixed-length-vector-lmul-max=" + getRISCVLMUL();
-  const char *const args[] = {
-      "triton-cpu",
-      "--tail-folding-policy=prefer-fold-tail",
-      "-riscv-v-vector-bits-min=256",
-      regLMUL.c_str(),
-      fixedLMUL.c_str(),
-      "-force-tail-folding-style=data-with-evl",
-  };
-  std::vector<std::string> extra;
-  {
-    // TRITON_RISCV_LLVM_ARGS: extra whitespace-separated LLVM options, e.g.
-    std::istringstream iss(mlir::triton::tools::getStrEnv("TRITON_RISCV_LLVM_ARGS"));
-    for (std::string tok; iss >> tok;)
-      extra.push_back(tok);
+// -debug / -debug-only=<types> in TRITON_RISCV_LLVM_ARGS. These are not
+// passed to cl::ParseCommandLineOptions: that would set llvm::DebugFlag for
+// the whole process (MLIR passes and the LLVM O3 pipeline included), and
+// TRITON_LLVM_DEBUG_ONLY replaces the global debug-type list on every MLIR
+// pass-manager run. Instead they are applied around each codegen run only
+// (applyCodegenDebugOptions), mirroring the scoping of TRITON_LLVM_DEBUG_ONLY
+// in python/src/ir.cc.
+bool isDebugOption(llvm::StringRef tok) {
+  tok = tok.ltrim('-');
+  return tok == "debug" || tok.starts_with("debug-only=");
+}
+
+// Called from translateHostLLVMIRToASM; the caller restores llvm::DebugFlag.
+void applyCodegenDebugOptions() {
+  if (isNativeTarget())
+    return;
+  std::istringstream iss(
+      mlir::triton::tools::getStrEnv("TRITON_RISCV_LLVM_ARGS"));
+  for (std::string tok; iss >> tok;) {
+    if (!isDebugOption(tok))
+      continue;
+    llvm::DebugFlag = true;
+    llvm::StringRef list = llvm::StringRef(tok).ltrim('-');
+    if (!list.consume_front("debug-only="))
+      continue; // plain -debug: all debug types
+    llvm::SmallVector<llvm::StringRef> parts;
+    list.split(parts, ',', -1, /*KeepEmpty=*/false);
+    std::vector<std::string> storage(parts.begin(), parts.end());
+    std::vector<const char *> types;
+    for (const auto &t : storage)
+      types.push_back(t.c_str());
+    llvm::setCurrentDebugTypes(types.data(), types.size());
   }
-  std::vector<const char *> argv(std::begin(args), std::end(args));
-  for (const auto &e : extra)
-    argv.push_back(e.c_str());
-  llvm::cl::ParseCommandLineOptions(argv.size(), argv.data());
+}
+
+using mlir::triton::tools::ScopedLLVMOptions;
+
+// The LLVM options the riscv64 target needs, for both the O3 pipeline
+// (make_llir, passed as optimize_module flags) and codegen (translate_to_asm).
+// They must be applied per run through ScopedLLVMOptions: every
+// ScopedLLVMOptions scope (optimize_module, attach_datalayout, ...) calls
+// cl::ResetAllOptionOccurrences() on exit, so options parsed once per process
+// with cl::ParseCommandLineOptions were silently reset to LLVM defaults after
+// the first O3 run (TRITON_RISCV_LMUL, -riscv-v-vector-bits-min, tail folding
+// all ignored by codegen).
+std::vector<ScopedLLVMOptions::Setting> getTargetLLVMOptionSettings() {
+  if (isNativeTarget())
+    return {};
+  const std::string lmul = getRISCVLMUL();
+  std::vector<ScopedLLVMOptions::Setting> settings = {
+      {"tail-folding-policy", "prefer-fold-tail"},
+      {"riscv-v-vector-bits-min", "256"},
+      {"riscv-v-register-bit-width-lmul", lmul},
+      // Also cap the LMUL of the fixed-length vectors Triton emits; the flag
+      // above only affects the autovectorizers.
+      {"riscv-v-fixed-length-vector-lmul-max", lmul},
+      {"force-tail-folding-style", "data-with-evl"},
+  };
+  // TRITON_RISCV_LLVM_ARGS: extra whitespace-separated LLVM options, e.g.
+  // "-riscv-foo=1 -enable-bar". -debug/-debug-only are handled separately
+  // (applyCodegenDebugOptions), for codegen only.
+  std::istringstream iss(
+      mlir::triton::tools::getStrEnv("TRITON_RISCV_LLVM_ARGS"));
+  for (std::string tok; iss >> tok;) {
+    if (isDebugOption(tok))
+      continue;
+    auto [name, value] = llvm::StringRef(tok).ltrim('-').split('=');
+    settings.emplace_back(name.str(),
+                          tok.find('=') == std::string::npos ? "true"
+                                                             : value.str());
+  }
+  return settings;
+}
+
+// optimize_module takes its option overrides as "name=value" flags.
+std::vector<std::string> getTargetLLVMFlags() {
+  std::vector<std::string> flags;
+  for (const auto &[name, value] : getTargetLLVMOptionSettings())
+    flags.push_back(name + "=" + value);
+  return flags;
 }
 
 void initializeHostTarget() {
@@ -142,19 +201,6 @@ void initializeHostTarget() {
   // LLVM's global thread pool is not fork-safe. Triton kernels are small, so
   // disabling LLVM's internal parallelism also avoids unnecessary overhead.
   llvm::parallel::strategy = llvm::hardware_concurrency(1);
-
-  if (!isNativeTarget()) {
-    static std::once_flag riscvFlag;
-    std::call_once(riscvFlag, setRISCV64CodegenOptions);
-  }
-}
-
-void setLLVMBooleanOption(const std::string &name, bool value) {
-  auto options = llvm::cl::getRegisteredOptions();
-  auto it = options.find(name);
-  if (it == options.end())
-    return;
-  it->second->addOccurrence(1, name, value ? "true" : "false");
 }
 
 // Return true if the CPU triple is AArch64.  Used by the NEON fallback below.
@@ -280,9 +326,12 @@ void setVscaleRangeForSVE(llvm::Module &module, llvm::StringRef cpuFeatures) {
 
 std::string translateHostLLVMIRToASM(llvm::Module &module,
                                      bool enableFpFusion) {
+  // All LLVM option overrides for this codegen run, held for its whole
+  // duration (see getTargetLLVMOptionSettings).
+  std::vector<ScopedLLVMOptions::Setting> settings =
+      getTargetLLVMOptionSettings();
   if (mlir::triton::tools::getBoolEnv("LLVM_IR_ENABLE_DUMP"))
-    setLLVMBooleanOption("print-after-all", true);
-
+    settings.emplace_back("print-after-all", "true");
   bool disableLLVMOpt = mlir::triton::tools::getBoolEnv("DISABLE_LLVM_OPT");
   if (!disableLLVMOpt) {
     auto flagList = mlir::triton::tools::getStrEnv("DISABLE_LLVM_OPT");
@@ -290,9 +339,18 @@ std::string translateHostLLVMIRToASM(llvm::Module &module,
       llvm::SmallVector<llvm::StringRef, 3> flags;
       llvm::StringRef(flagList).split(flags, ',');
       for (llvm::StringRef flag : flags)
-        setLLVMBooleanOption(flag.str(), true);
+        settings.emplace_back(flag.str(), "true");
     }
   }
+  ScopedLLVMOptions optionScope(settings);
+
+  // Codegen-only -debug/-debug-only from TRITON_RISCV_LLVM_ARGS. Declared
+  // after optionScope so the flag is restored before the scope resets the
+  // option registry.
+  const bool savedDebugFlag = llvm::DebugFlag;
+  llvm::scope_exit restoreDebugFlag(
+      [savedDebugFlag] { llvm::DebugFlag = savedDebugFlag; });
+  applyCodegenDebugOptions();
 
   for (llvm::Function &function : module.functions())
     if (!function.hasFnAttribute(llvm::Attribute::NoInline))
@@ -383,6 +441,8 @@ void init_triton_cpu_llvm(py::module_ &m) {
   m.def("get_cpu_triple", []() { return getHostTargetTriple(); });
   m.def("get_cpu_name", []() { return getHostCPUName(); });
   m.def("get_cpu_features", &getCPUFeatures);
+  // LLVM option overrides ("name=value") the target needs in optimize_module.
+  m.def("get_llvm_flags", &getTargetLLVMFlags);
   m.def("set_host_target",
         [](llvm::Module *module) { setHostTarget(*module); });
   m.def("translate_to_asm",

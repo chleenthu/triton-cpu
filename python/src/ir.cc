@@ -44,6 +44,7 @@
 #include "triton/Tools/PluginUtils.h"
 #include "triton/Tools/Sys/Dump.h"
 #include "triton/Tools/Sys/GetEnv.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/SourceMgr.h"
 #include <memory>
 #include <stdexcept>
@@ -2071,6 +2072,14 @@ void init_triton_ir(py::module_ &m) {
             } else {
               self.enableCrashReproducerGeneration(makeConsoleReproducer());
             }
+
+            // Enable the debug flag only for this pass-manager run. Left on, it
+            // stays set for the later LLVM O3 pipeline and codegen
+            // (make_llir/make_asm), where every LLVM_DEBUG site then pays an
+            // isCurrentDebugType() check -- very slow with a Debug LLVM.
+            const bool savedDebugFlag = ::llvm::DebugFlag;
+            llvm::scope_exit restoreDebugFlag(
+                [savedDebugFlag] { ::llvm::DebugFlag = savedDebugFlag; });
 
             if (triton::tools::getBoolEnv("TRITON_ENABLE_LLVM_DEBUG")) {
               ::llvm::DebugFlag = true;
